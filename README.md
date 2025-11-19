@@ -37,12 +37,38 @@ See [RETENTION_REASONING_AGENT_DESIGN.md](./RETENTION_REASONING_AGENT_DESIGN.md)
 
 ## Installation
 
+### Option 1: Using Poetry (Recommended)
 ```bash
 # Install dependencies
 poetry install
 
-# Or with pip
+# Activate virtual environment
+poetry shell
+```
+
+### Option 2: Using pip
+```bash
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# For development (includes testing/linting tools)
+pip install -r requirements-dev.txt
+
+# Install package in editable mode
 pip install -e .
+```
+
+### Setup Environment Variables
+```bash
+# Copy example environment file
+cp .env.example .env
+
+# Edit .env and add your API keys
+# GOOGLE_API_KEY=your_google_api_key_here
 ```
 
 ## Quick Start
