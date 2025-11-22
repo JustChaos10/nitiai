@@ -29,6 +29,9 @@ python-dotenv>=1.0.0
 loguru>=0.7.0
 httpx>=0.26.0
 
+# Caching (optional - only needed if using RedisCache)
+redis>=5.0.0
+
 # Async support (usually built-in but ensuring compatibility)
 asyncio>=3.4.3
 
