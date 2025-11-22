@@ -16,6 +16,7 @@ from .nodes import (
     LeverEstimatorNode,
     ExplanationGeneratorNode,
 )
+from .utils import get_cache, ReasoningCache
 
 
 class ReasoningState(TypedDict):
@@ -52,6 +53,7 @@ class RetentionReasoningAgent:
         llm: BaseChatModel,
         available_features: list[str],
         data_loader: Any = None,
+        cache: ReasoningCache | None = None,
     ):
         """Initialize the retention reasoning agent.
 
@@ -59,23 +61,27 @@ class RetentionReasoningAgent:
             llm: Language model for hypothesis generation and explanation
             available_features: List of available features in the dataset
             data_loader: Optional data loader for BigQuery access
+            cache: Optional cache for storing test results and intermediate data
         """
         self.llm = llm
         self.available_features = available_features
         self.data_loader = data_loader
+        self.cache = cache or get_cache()
 
         # Initialize nodes
         self.hypothesis_generator = HypothesisGeneratorNode(
             llm=llm,
             available_features=available_features,
         )
-        self.causal_tester = CausalTesterNode(data_loader=data_loader)
+        self.causal_tester = CausalTesterNode(data_loader=data_loader, cache=self.cache)
         self.confounder_analyzer = ConfounderAnalyzerNode()
         self.lever_estimator = LeverEstimatorNode()
         self.explanation_generator = ExplanationGeneratorNode(llm=llm)
 
         # Build graph
         self.graph = self._build_graph()
+
+        logger.info(f"RetentionReasoningAgent initialized with caching enabled")
 
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph reasoning pipeline.
