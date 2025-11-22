@@ -158,10 +158,10 @@ class RetentionReasoningAgent:
             session.validated_causes = final_state.get("validated_causes", [])
             session.confidence_score = self._calculate_confidence(final_state)
 
-            # TODO: Convert actionable_levers to Lever objects
-            # For now, store as simple list
+            # Store actionable levers with impact estimates
             session.agent_state = {
                 "actionable_levers": final_state.get("actionable_levers", []),
+                "lever_impact_estimates": final_state.get("lever_impact_estimates", []),
                 "explanation": final_state.get("explanation", ""),
             }
 
@@ -209,12 +209,26 @@ class RetentionReasoningAgent:
         """
         validated_count = state.get("validated_count", 0)
         hypotheses_count = state.get("hypotheses_count", 1)
+        validated_hypotheses = state.get("validated_hypotheses", [])
 
         # Base confidence on validation rate
         validation_rate = validated_count / max(hypotheses_count, 1)
 
-        # TODO: Factor in test confidence scores
-        return min(validation_rate, 1.0)
+        # Factor in test confidence scores from validated hypotheses
+        if validated_hypotheses:
+            # Average confidence across validated hypotheses
+            confidences = [
+                h.get("consensus", {}).get("confidence", 0.5)
+                for h in validated_hypotheses
+            ]
+            avg_test_confidence = sum(confidences) / len(confidences) if confidences else 0.5
+
+            # Weighted average: 70% validation rate, 30% test confidence
+            overall_confidence = (0.7 * validation_rate) + (0.3 * avg_test_confidence)
+        else:
+            overall_confidence = validation_rate
+
+        return min(overall_confidence, 1.0)
 
     def get_graph_visualization(self) -> str:
         """Get a visualization of the reasoning graph.
