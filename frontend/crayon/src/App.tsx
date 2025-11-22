@@ -5,14 +5,6 @@ import "@crayonai/react-ui/dist/style.css";
 import { ReasoningGraph } from "./components/ReasoningGraph";
 import { HypothesisExplorer } from "./components/HypothesisExplorer";
 
-type Campaign = {
-  name: string;
-  segment: any;
-  offer: any;
-  playbook: any;
-  performance: any;
-};
-
 type Hypothesis = {
   id: string;
   cause: string;
@@ -62,7 +54,6 @@ const defaultPayload = {
 
 function App() {
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [hypotheses, setHypotheses] = useState<Hypothesis[]>([]);
   const [causalGraph, setCausalGraph] = useState<CausalGraph | null>(null);
   const [loading, setLoading] = useState(false);
@@ -73,9 +64,8 @@ function App() {
     try {
       const payload = JSON.parse(payloadText);
       const res = await axios.post(`${API_BASE}/analyze`, payload);
-      const { explanation, validated_causes, campaigns, hypotheses, causal_graph } = res.data;
+      const { explanation, validated_causes, hypotheses, causal_graph } = res.data;
 
-      setCampaigns(campaigns || []);
       setHypotheses(hypotheses || []);
       setCausalGraph(causal_graph || null);
 
@@ -111,11 +101,8 @@ function App() {
             <div style={{ marginBottom: 8 }}>
               <strong>Hypotheses:</strong> {hypotheses.length}
             </div>
-            <div style={{ marginBottom: 8 }}>
-              <strong>Validated:</strong> {hypotheses.filter((h) => h.validated).length}
-            </div>
             <div>
-              <strong>Campaigns:</strong> {campaigns.length}
+              <strong>Validated:</strong> {hypotheses.filter((h) => h.validated).length}
             </div>
           </div>
         </div>
@@ -179,17 +166,6 @@ function App() {
                 initialValue={JSON.stringify(defaultPayload, null, 2)}
                 onSend={(text) => runAnalysis(text)}
               />
-              {campaigns.length > 0 && (
-                <div style={{ marginTop: 16 }}>
-                  <h3>Campaigns</h3>
-                  {campaigns.map((c, i) => (
-                    <details key={i} style={{ marginBottom: 8 }}>
-                      <summary>{c.name}</summary>
-                      <pre style={{ whiteSpace: "pre-wrap" }}>{JSON.stringify(c, null, 2)}</pre>
-                    </details>
-                  ))}
-                </div>
-              )}
             </>
           )}
 

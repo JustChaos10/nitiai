@@ -11,8 +11,7 @@ from loguru import logger
 
 from .agent import RetentionReasoningAgent
 from .models import Opportunity
-from .utils.ingestion import AlertIngestionService
-from .services import StrategyComposer, ABTestRecommender
+from .services.ab_testing import ABTestRecommender
 from .utils import (
     get_cache,
     HeterogeneousEffectEstimator,
@@ -137,8 +136,7 @@ def create_app(agent: RetentionReasoningAgent):
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    ingest = AlertIngestionService()
-    composer = StrategyComposer()
+    # Initialize standalone services (no platform integration)
     ab_tester = ABTestRecommender()
     het_estimator = HeterogeneousEffectEstimator()
     simulator = InterventionSimulator()
@@ -157,10 +155,10 @@ def create_app(agent: RetentionReasoningAgent):
     @app.post("/analyze")
     async def analyze(payload: AnalyzeRequest):
         try:
-            opp = ingest.from_payload(payload.opportunity)
+            # Create Opportunity object directly from payload
+            opp = Opportunity.model_validate(payload.opportunity)
             df = pd.DataFrame(payload.data_preview) if payload.data_preview else pd.DataFrame()
             session = await agent.analyze_opportunity(opp, df, payload.business_context)
-            campaigns = composer.compose_campaigns(session.agent_state.get("recommended_levers", []))
 
             # Format hypotheses and build causal graph for frontend
             hypotheses = format_hypotheses_for_frontend(session.hypotheses)
@@ -172,7 +170,6 @@ def create_app(agent: RetentionReasoningAgent):
                 "validated_causes": session.validated_causes,
                 "recommended_levers": session.agent_state.get("actionable_levers"),
                 "explanation": session.agent_state.get("explanation"),
-                "campaigns": campaigns,
                 "hypotheses": hypotheses,
                 "causal_graph": causal_graph,
             }
@@ -186,10 +183,10 @@ def create_app(agent: RetentionReasoningAgent):
         async def event_gen() -> AsyncGenerator[bytes, None]:
             try:
                 yield b"data: starting analysis\n\n"
-                opp = ingest.from_payload(payload.opportunity)
+                # Create Opportunity object directly from payload
+                opp = Opportunity.model_validate(payload.opportunity)
                 df = pd.DataFrame(payload.data_preview) if payload.data_preview else pd.DataFrame()
                 session = await agent.analyze_opportunity(opp, df, payload.business_context)
-                campaigns = composer.compose_campaigns(session.agent_state.get("recommended_levers", []))
 
                 # Format hypotheses and build causal graph
                 hypotheses = format_hypotheses_for_frontend(session.hypotheses)
@@ -201,7 +198,6 @@ def create_app(agent: RetentionReasoningAgent):
                     "validated_causes": session.validated_causes,
                     "recommended_levers": session.agent_state.get("actionable_levers"),
                     "explanation": session.agent_state.get("explanation"),
-                    "campaigns": campaigns,
                     "hypotheses": hypotheses,
                     "causal_graph": causal_graph,
                 }
