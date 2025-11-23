@@ -1,34 +1,11 @@
 """Simple example of using the Retention Reasoning Agent."""
 
-import os
-from pathlib import Path
-
-import importlib
-import numpy as np
 import pandas as pd
-from dotenv import load_dotenv
+import numpy as np
+from langchain_groq import ChatGroq
 
 from retention_reasoning import RetentionReasoningAgent
 from retention_reasoning.models import Opportunity, OpportunityType
-
-ROOT_DIR = Path(__file__).resolve().parent.parent
-load_dotenv(ROOT_DIR / ".env")
-
-
-def _create_llm():
-    """Initialize the Groq Cloud chat model with env-driven settings."""
-    if not os.getenv("GROQ_API_KEY"):
-        raise RuntimeError("Set GROQ_API_KEY (and optionally GROQ_MODEL) in your environment.")
-
-    groq_module = importlib.import_module("langchain_groq")
-    ChatGroq = getattr(groq_module, "ChatGroq")
-
-    return ChatGroq(
-        model=os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
-        temperature=float(os.getenv("GROQ_TEMPERATURE", 0.7)),
-        service_tier=os.getenv("GROQ_SERVICE_TIER", "on_demand"),
-        max_retries=int(os.getenv("GROQ_MAX_RETRIES", 2)),
-    )
 
 
 def generate_synthetic_data(n_samples: int = 1000) -> pd.DataFrame:
@@ -55,7 +32,7 @@ def generate_synthetic_data(n_samples: int = 1000) -> pd.DataFrame:
     })
 
     # Mediator: Onboarding engagement (affected by delivery delay)
-    # Late delivery -> lower engagement
+    # Late delivery → lower engagement
     data["onboarding_engagement_score"] = (
         5.0
         - 0.3 * data["first_delivery_days"]
@@ -64,14 +41,13 @@ def generate_synthetic_data(n_samples: int = 1000) -> pd.DataFrame:
     ).clip(0, 10)
 
     # Outcome: Churn (affected by onboarding engagement)
-    # Low engagement -> higher churn
-    log_odds = (
-        -2.0
-        + 0.45 * data["first_delivery_days"]  # Stronger direct effect of delivery delay
-        - 0.7 * data["onboarding_engagement_score"]  # Stronger protective effect of onboarding
-        - 0.0005 * data["order_value"]
-    )
-    churn_prob = 1 / (1 + np.exp(-log_odds))
+    # Low engagement → higher churn
+    churn_prob = 1 / (1 + np.exp(
+        2.0
+        - 0.8 * data["onboarding_engagement_score"]
+        - 0.0001 * data["order_value"]
+        + 0.1 * data["first_delivery_days"]  # Small direct effect
+    ))
     data["churn_30d"] = (np.random.random(n_samples) < churn_prob).astype(int)
 
     return data
@@ -94,14 +70,17 @@ def main():
     features.remove("customer_id")
     print(f"\n2. Available features: {features}")
 
-    # Initialize Groq LLM
+    # Initialize LLM (you'll need to set GROQ_API_KEY environment variable)
     print("\n3. Initializing LLM...")
     try:
-        llm = _create_llm()
-        print(f"   LLM initialized ({llm.__class__.__name__})")
+        llm = ChatGroq(
+            model="llama-3.3-70b-versatile",
+            temperature=0.7,
+        )
+        print("   ✓ LLM initialized")
     except Exception as e:
-        print(f"   Failed to initialize LLM: {e}")
-        print("   Please check your GROQ_API_KEY and GROQ_* settings")
+        print(f"   ✗ Failed to initialize LLM: {e}")
+        print("   Please set GROQ_API_KEY environment variable")
         return
 
     # Create agent
@@ -110,7 +89,7 @@ def main():
         llm=llm,
         available_features=features,
     )
-    print("   Agent created")
+    print("   ✓ Agent created")
 
     # Define opportunity
     print("\n5. Defining retention opportunity...")
@@ -148,19 +127,19 @@ def main():
         print("ANALYSIS RESULTS")
         print("=" * 80)
 
-        print(f"\nStatus: {session.status}")
-        print(f"Confidence: {session.confidence_score:.1%}")
-        print(f"Hypotheses tested: {session.hypotheses_count}")
-        print(f"Validated hypotheses: {session.validated_hypotheses_count}")
+        print(f"\n✓ Status: {session.status}")
+        print(f"✓ Confidence: {session.confidence_score:.1%}")
+        print(f"✓ Hypotheses tested: {session.hypotheses_count}")
+        print(f"✓ Validated hypotheses: {session.validated_hypotheses_count}")
 
         if session.validated_causes:
-            print("\nValidated Causal Factors:")
+            print(f"\n📊 Validated Causal Factors:")
             for i, cause in enumerate(session.validated_causes, 1):
                 print(f"   {i}. {cause}")
 
-        print("\nDetailed Hypotheses:")
+        print(f"\n📝 Detailed Hypotheses:")
         for i, hypothesis in enumerate(session.hypotheses, 1):
-            status = "VALIDATED" if hypothesis.validated else "Not validated"
+            status = "✓ VALIDATED" if hypothesis.validated else "✗ Not validated"
             print(f"\n   Hypothesis {i}: {status}")
             print(f"   Cause: {hypothesis.cause}")
             print(f"   Effect: {hypothesis.effect}")
@@ -176,15 +155,12 @@ def main():
             if hypothesis.test_results:
                 print(f"   Test results:")
                 for result in hypothesis.test_results:
-                    p_text = f"{result.p_value:.4f}" if result.p_value is not None else "N/A"
-                    effect_text = (
-                        f"{result.effect_size:.3f}" if result.effect_size is not None else "N/A"
-                    )
-                    print(f"     - {result.method.value}: p={p_text}, effect_size={effect_text}")
+                    print(f"     - {result.method.value}: p={result.p_value:.4f}, "
+                          f"effect_size={result.effect_size:.3f}")
 
         # Explanation
         if session.agent_state.get("explanation"):
-            print("\nExplanation:")
+            print(f"\n💡 Explanation:")
             print(f"   {session.agent_state['explanation']}")
 
         print("\n" + "=" * 80)
@@ -192,7 +168,7 @@ def main():
         print("=" * 80)
 
     except Exception as e:
-        print(f"\nAnalysis failed: {e}")
+        print(f"\n✗ Analysis failed: {e}")
         import traceback
         traceback.print_exc()
 

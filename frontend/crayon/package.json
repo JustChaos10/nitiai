@@ -9,12 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@crayonai/react-core": "^0.2.6",
-    "@crayonai/react-hooks": "^0.2.6",
-    "@crayonai/react-ui": "^0.2.6",
     "axios": "^1.6.8",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "reactflow": "^11.11.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.10",

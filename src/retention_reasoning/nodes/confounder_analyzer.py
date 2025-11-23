@@ -1,6 +1,5 @@
 """Confounder analysis node using causal inference engine."""
 
-import re
 from typing import Any
 
 import pandas as pd
@@ -12,16 +11,6 @@ from ..utils.causal_inference import CausalInferenceEngine
 
 class ConfounderAnalyzerNode:
     """Analyzes confounding structures and builds causal DAGs."""
-
-    _column_guess_pattern = re.compile(r"(?P<column>[A-Za-z_][A-Za-z0-9_]*)")
-
-    def _extract_column_name(self, expression: str, data: pd.DataFrame) -> str | None:
-        """Extract a plausible column name from an expression that exists in data."""
-        match = self._column_guess_pattern.match(expression.strip())
-        if not match:
-            return None
-        col = match.group("column")
-        return col if col in data.columns else None
 
     def __init__(self):
         """Initialize confounder analyzer."""
@@ -47,27 +36,10 @@ class ConfounderAnalyzerNode:
 
         logger.info(f"Analyzing causal structure for {hypothesis.cause} → {hypothesis.effect}")
 
-        normalized_cause = self._extract_column_name(hypothesis.cause, data)
-        if not normalized_cause:
-            logger.warning(
-                f"Skipping causal analysis for hypothesis {hypothesis.hypothesis_id} because "
-                f"cause '{hypothesis.cause}' is not a data column"
-            )
-            return hypothesis
-
-        if hypothesis.effect not in data.columns:
-            logger.warning(
-                f"Skipping causal analysis for hypothesis {hypothesis.hypothesis_id} because "
-                f"effect '{hypothesis.effect}' is not in data"
-            )
-            return hypothesis
-
-        hypothesis_for_analysis = hypothesis.model_copy(update={"cause": normalized_cause})
-
         try:
             # Build causal structure
             causal_structure = self.causal_engine.analyze_causal_structure(
-                hypothesis_for_analysis, data
+                hypothesis, data
             )
 
             hypothesis.causal_structure = causal_structure
@@ -108,16 +80,27 @@ class ConfounderAnalyzerNode:
 
         return analyzed_hypotheses
 
-    async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
-        """LangGraph node function (async)."""
+    def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
+        """LangGraph node function (sync wrapper).
+
+        Args:
+            state: Graph state
+
+        Returns:
+            Updated state
+        """
+        import asyncio
+
         validated_hypotheses = state.get("validated_hypotheses", [])
         data = state.get("data")
 
-        if data is None or data.empty:
+        if data is None or (isinstance(data, pd.DataFrame) and data.empty):
             logger.error("No data provided for confounder analysis")
             return state
 
-        analyzed_hypotheses = await self.analyze_all_hypotheses(validated_hypotheses, data)
+        analyzed_hypotheses = asyncio.run(
+            self.analyze_all_hypotheses(validated_hypotheses, data)
+        )
 
         # Extract validated causes and actionable levers
         validated_causes = []

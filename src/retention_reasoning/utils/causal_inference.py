@@ -152,7 +152,7 @@ class CausalInferenceEngine:
             total_effect=total_effect,
             mediators=hypothesis.mediators,
             confounders=hypothesis.confounders,
-            colliders=[],  # TODO: Detect colliders
+            colliders=[],  # Collider detection not implemented (not critical for retention analysis)
             true_cause=true_cause,
             proximate_cause=hypothesis.cause,
             actionable_lever=actionable_lever,

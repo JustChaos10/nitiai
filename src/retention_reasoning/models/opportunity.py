@@ -70,14 +70,10 @@ class Opportunity(BaseModel):
         super().__init__(**data)
         if self.change_magnitude is None:
             self.change_magnitude = self.current_value - self.baseline_value
-        if self.change_percent is None:
-            if self.baseline_value != 0:
-                self.change_percent = (
-                    (self.current_value - self.baseline_value) / self.baseline_value * 100
-                )
-            else:
-                # Avoid division by zero; treat change as 0% when no baseline
-                self.change_percent = 0.0
+        if self.change_percent is None and self.baseline_value != 0:
+            self.change_percent = (
+                (self.current_value - self.baseline_value) / self.baseline_value * 100
+            )
 
     @property
     def is_sufficient_sample(self) -> bool:
@@ -87,14 +83,12 @@ class Opportunity(BaseModel):
     @property
     def severity_score(self) -> float:
         """Compute severity score (0-1) based on change magnitude and sample size."""
-        change_pct = self.change_percent or 0.0
-        change_score = min(abs(change_pct) / 100, 1.0)
+        change_score = min(abs(self.change_percent) / 100, 1.0)
         sample_score = min(self.sample_size / 1000, 1.0)
         return (change_score * 0.7 + sample_score * 0.3)
 
     def to_context_string(self) -> str:
         """Generate a concise context string for LLM prompts."""
-        change_text = f"{self.change_percent:+.1f}%" if self.change_percent is not None else "N/A"
         return f"""
 Opportunity: {self.title}
 Type: {self.type.value}
@@ -103,7 +97,7 @@ Description: {self.description}
 Metric: {self.metric_name}
 - Baseline: {self.baseline_value:.2%}
 - Current: {self.current_value:.2%}
-- Change: {change_text}
+- Change: {self.change_percent:+.1f}%
 
 Affected cohort: {self.affected_cohort}
 Sample size: {self.sample_size:,} customers

@@ -16,7 +16,7 @@ from .nodes import (
     LeverEstimatorNode,
     ExplanationGeneratorNode,
 )
-from .services import StrategyComposer
+from .utils import get_cache, ReasoningCache
 
 
 class ReasoningState(TypedDict):
@@ -53,7 +53,7 @@ class RetentionReasoningAgent:
         llm: BaseChatModel,
         available_features: list[str],
         data_loader: Any = None,
-        strategy_composer: StrategyComposer | None = None,
+        cache: ReasoningCache | None = None,
     ):
         """Initialize the retention reasoning agent.
 
@@ -61,12 +61,12 @@ class RetentionReasoningAgent:
             llm: Language model for hypothesis generation and explanation
             available_features: List of available features in the dataset
             data_loader: Optional data loader for BigQuery access
-            strategy_composer: Optional strategy composer for campaigns
+            cache: Optional cache for storing test results and intermediate data
         """
         self.llm = llm
         self.available_features = available_features
         self.data_loader = data_loader
-        self.strategy_composer = strategy_composer or StrategyComposer()
+        self.cache = cache or get_cache()
 
         # Initialize nodes
         self.hypothesis_generator = HypothesisGeneratorNode(
@@ -80,6 +80,8 @@ class RetentionReasoningAgent:
 
         # Build graph
         self.graph = self._build_graph()
+
+        logger.info(f"RetentionReasoningAgent initialized with caching enabled")
 
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph reasoning pipeline.
@@ -110,7 +112,7 @@ class RetentionReasoningAgent:
     async def analyze_opportunity(
         self,
         opportunity: Opportunity,
-        data: pd.DataFrame | None,
+        data: pd.DataFrame,
         business_context: str | None = None,
     ) -> ReasoningSession:
         """Analyze a retention opportunity to identify causal factors.
@@ -124,15 +126,6 @@ class RetentionReasoningAgent:
             ReasoningSession with complete analysis
         """
         logger.info(f"Starting reasoning analysis for opportunity: {opportunity.opportunity_id}")
-
-        # If data not provided, attempt to load from data_loader (e.g., BigQuery)
-        if data is None and self.data_loader and hasattr(self.data_loader, "load_enriched_customers"):
-            try:
-                logger.info("Loading data via data_loader.load_enriched_customers (limit 5000)")
-                data = self.data_loader.load_enriched_customers(limit=5000)
-            except Exception as exc:
-                logger.error(f"Failed to load data from data_loader: {exc}")
-                data = None
 
         # Create session
         session = ReasoningSession(opportunity_id=opportunity.opportunity_id)
@@ -163,19 +156,13 @@ class RetentionReasoningAgent:
             session.hypotheses = final_state.get("hypotheses", [])
             session.hypotheses_count = len(session.hypotheses)
             session.validated_causes = final_state.get("validated_causes", [])
-            session.recommended_levers = final_state.get("recommended_levers", [])
             session.confidence_score = self._calculate_confidence(final_state)
-            campaigns = self.strategy_composer.compose_campaigns(session.recommended_levers)
 
-            # TODO: Convert actionable_levers to Lever objects
-            # For now, store as simple list
+            # Store actionable levers with impact estimates
             session.agent_state = {
                 "actionable_levers": final_state.get("actionable_levers", []),
-                "recommended_levers": [
-                    lever.name for lever in final_state.get("recommended_levers", [])
-                ],
+                "lever_impact_estimates": final_state.get("lever_impact_estimates", []),
                 "explanation": final_state.get("explanation", ""),
-                "campaigns": campaigns,
             }
 
             session.mark_completed()
@@ -192,7 +179,7 @@ class RetentionReasoningAgent:
     def analyze_opportunity_sync(
         self,
         opportunity: Opportunity,
-        data: pd.DataFrame | None,
+        data: pd.DataFrame,
         business_context: str | None = None,
     ) -> ReasoningSession:
         """Synchronous version of analyze_opportunity.
@@ -222,12 +209,29 @@ class RetentionReasoningAgent:
         """
         validated_count = state.get("validated_count", 0)
         hypotheses_count = state.get("hypotheses_count", 1)
+        validated_hypotheses = state.get("validated_hypotheses", [])
 
         # Base confidence on validation rate
         validation_rate = validated_count / max(hypotheses_count, 1)
 
-        # TODO: Factor in test confidence scores
-        return min(validation_rate, 1.0)
+        # Factor in test confidence scores from validated hypotheses
+        if validated_hypotheses:
+            # Average confidence across validated hypotheses
+            confidences = []
+            for h in validated_hypotheses:
+                consensus = getattr(h, "consensus", None)
+                if isinstance(consensus, dict):
+                    confidences.append(consensus.get("confidence", 0.5))
+                else:
+                    confidences.append(0.5)
+            avg_test_confidence = sum(confidences) / len(confidences) if confidences else 0.5
+
+            # Weighted average: 70% validation rate, 30% test confidence
+            overall_confidence = (0.7 * validation_rate) + (0.3 * avg_test_confidence)
+        else:
+            overall_confidence = validation_rate
+
+        return min(overall_confidence, 1.0)
 
     def get_graph_visualization(self) -> str:
         """Get a visualization of the reasoning graph.

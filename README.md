@@ -67,28 +67,23 @@ pip install -e .
 # Copy example environment file
 cp .env.example .env
 
-# Edit .env and add your Groq API key plus tuning knobs
-# GROQ_API_KEY=your_groq_api_key_here
-# GROQ_MODEL=llama-3.1-8b-instant
-# GROQ_TEMPERATURE=0.7
-# GROQ_SERVICE_TIER=on_demand
+# Edit .env and add your API keys
+# GOOGLE_API_KEY=your_google_api_key_here
 ```
 
 ## Quick Start
 
 ```python
-import os
-
 from retention_reasoning import RetentionReasoningAgent
 from retention_reasoning.models import Opportunity, OpportunityType
 from langchain_groq import ChatGroq
+import os
 import pandas as pd
 
-# Initialize the Groq-powered LLM
+# Initialize Groq LLM
 llm = ChatGroq(
-    model=os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
-    temperature=float(os.getenv("GROQ_TEMPERATURE", 0.7)),
-    service_tier=os.getenv("GROQ_SERVICE_TIER", "on_demand"),
+  model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+  temperature=float(os.getenv("GROQ_TEMPERATURE", "0.2")),
 )
 
 # Define available features

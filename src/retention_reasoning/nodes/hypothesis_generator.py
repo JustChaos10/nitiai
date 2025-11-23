@@ -1,7 +1,6 @@
 """Hypothesis generation node using LLM."""
 
 import json
-import re
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -16,108 +15,15 @@ from ..prompts.hypothesis_generation import (
 )
 
 
-def _parse_test_method(method: str) -> TestMethod | None:
-    """Normalize test method strings into a TestMethod enum."""
-
-    normalized = method.strip().lower().replace(" ", "_").replace("-", "_")
-
-    for option in TestMethod:
-        if normalized == option.value:
-            return option
-
-    synonyms: dict[str, TestMethod] = {
-        "logistic_regression": TestMethod.REGRESSION_ADJUSTMENT,
-        "regression_analysis": TestMethod.REGRESSION_ADJUSTMENT,
-        "treatment_effect_regression": TestMethod.REGRESSION_ADJUSTMENT,
-        "survival_analysis": TestMethod.REGRESSION_ADJUSTMENT,
-        "propensity_score_matching": TestMethod.PROPENSITY_MATCHING,
-        "propensity_scoring": TestMethod.PROPENSITY_MATCHING,
-        "propensity_score": TestMethod.PROPENSITY_MATCHING,
-        "cox_proportional_hazards_model": TestMethod.REGRESSION_ADJUSTMENT,
-        "cox_proportional_hazards": TestMethod.REGRESSION_ADJUSTMENT,
-        "cox_hazard_model": TestMethod.REGRESSION_ADJUSTMENT,
-        "cox_model": TestMethod.REGRESSION_ADJUSTMENT,
-        "instrumental_variable": TestMethod.INSTRUMENTAL_VARIABLES,
-        "instrumental_variables": TestMethod.INSTRUMENTAL_VARIABLES,
-        "iv": TestMethod.INSTRUMENTAL_VARIABLES,
-        "difference_in_difference": TestMethod.DIFFERENCE_IN_DIFFERENCES,
-        "difference_in_differences": TestMethod.DIFFERENCE_IN_DIFFERENCES,
-        "cohort_analysis": TestMethod.DIFFERENCE_IN_DIFFERENCES,
-        "synthetic_control": TestMethod.SYNTHETIC_CONTROL,
-        "synthetic_control_method": TestMethod.SYNTHETIC_CONTROL,
-        "dag_analysis": TestMethod.DAG_BASED,
-        "dag_based": TestMethod.DAG_BASED,
-        "t_test": TestMethod.REGRESSION_ADJUSTMENT,
-        "chi_squared_test": TestMethod.REGRESSION_ADJUSTMENT,
-        "matching_on_product_category": TestMethod.PROPENSITY_MATCHING,
-        "matching_on_onboarding_engagement_score": TestMethod.PROPENSITY_MATCHING,
-        "matching_on_first_order_return_rate": TestMethod.PROPENSITY_MATCHING,
-        "matching_on_time_since_last_order": TestMethod.PROPENSITY_MATCHING,
-        "classification_tree": TestMethod.REGRESSION_ADJUSTMENT,
-        "decision_tree": TestMethod.REGRESSION_ADJUSTMENT,
-        "decision_trees": TestMethod.REGRESSION_ADJUSTMENT,
-        "intention_to_treat_analysis": TestMethod.REGRESSION_ADJUSTMENT,
-        "stratified_sampling": TestMethod.PROPENSITY_MATCHING,
-        "generalized_linear_mixed_model": TestMethod.REGRESSION_ADJUSTMENT,
-        "multiple_imputation": TestMethod.REGRESSION_ADJUSTMENT,
-        "cluster_analysis": TestMethod.REGRESSION_ADJUSTMENT,
-        "clustering": TestMethod.REGRESSION_ADJUSTMENT,
-        "regression_tree": TestMethod.REGRESSION_ADJUSTMENT,
-        "regression_trees": TestMethod.REGRESSION_ADJUSTMENT,
-        "random_forest": TestMethod.REGRESSION_ADJUSTMENT,
-        "random_forests": TestMethod.REGRESSION_ADJUSTMENT,
-        "decision_tree_analysis": TestMethod.REGRESSION_ADJUSTMENT,
-        "decision_tree": TestMethod.REGRESSION_ADJUSTMENT,
-        "decision_trees": TestMethod.REGRESSION_ADJUSTMENT,
-        "regression_discontinuity_design": TestMethod.REGRESSION_DISCONTINUITY,
-        "instrumental_variable_analysis": TestMethod.INSTRUMENTAL_VARIABLES,
-        "linear_regression": TestMethod.REGRESSION_ADJUSTMENT,
-        "ordinary_least_squares": TestMethod.REGRESSION_ADJUSTMENT,
-        "chi_square_test": TestMethod.REGRESSION_ADJUSTMENT,
-        "chi_squared": TestMethod.REGRESSION_ADJUSTMENT,
-        "chi_square": TestMethod.REGRESSION_ADJUSTMENT,
-        "difference_in_means": TestMethod.REGRESSION_ADJUSTMENT,
-        "marginal_effect": TestMethod.REGRESSION_ADJUSTMENT,
-        "difference_of_means": TestMethod.REGRESSION_ADJUSTMENT,
-    }
-
-    return synonyms.get(normalized)
-
-
 class HypothesisGeneratorNode:
     """Generates causal hypotheses using an LLM."""
 
-    _column_guess_pattern = re.compile(r"(?P<column>[A-Za-z_][A-Za-z0-9_]*)")
-    _alias_map: dict[str, str] = {
-        "first_order_day": "first_delivery_days",
-        "first_order_days": "first_delivery_days",
-        "first_order_value": "order_value",
-        "average_order_value": "order_value",
-        "avg_order_value": "order_value",
-        "product_mix": "product_category",
-        "product_mix_high": "product_category",
-        "order_frequency": "order_value",  # best-effort fallback
-        "time_since_last_order": "first_delivery_days",  # best-effort fallback
+    _TEST_METHOD_ALIASES = {
+        "regression_analysis": TestMethod.REGRESSION_ADJUSTMENT.value,
+        "correlation_analysis": TestMethod.REGRESSION_ADJUSTMENT.value,
+        "chi_squared_test": TestMethod.PROPENSITY_MATCHING.value,
+        "survival_analysis": TestMethod.REGRESSION_ADJUSTMENT.value,
     }
-
-    def _extract_column_name(self, expression: str) -> str | None:
-        """Extract a plausible column name from a human-readable description."""
-        match = self._column_guess_pattern.match(expression.strip())
-        return match.group("column") if match else None
-
-    def _resolve_cause_feature(self, cause_expr: str) -> str | None:
-        """Resolve a cause expression to an available feature name if possible."""
-        candidate = (self._extract_column_name(cause_expr) or "").strip()
-        if candidate in self.available_features:
-            return candidate
-
-        key = candidate.lower()
-        alias = self._alias_map.get(key)
-        if alias and alias in self.available_features:
-            logger.info(f"Mapping cause '{cause_expr}' to available feature '{alias}'")
-            return alias
-
-        return None
 
     def __init__(
         self,
@@ -176,47 +82,23 @@ class HypothesisGeneratorNode:
 
             # Convert to Hypothesis objects
             hypotheses = []
-            seen_keys: set[tuple[str, str]] = set()
             for i, hyp_data in enumerate(hypotheses_data.get("hypotheses", [])[:self.max_hypotheses]):
                 try:
-                    normalized_cause = self._resolve_cause_feature(hyp_data["cause"])
-                    if not normalized_cause:
-                        logger.warning(
-                            f"Skipping hypothesis {i+1} because cause '{hyp_data['cause']}' "
-                            f"does not map to available features"
-                        )
-                        continue
-
-                    effect_name = hyp_data.get("effect", opportunity.metric_name)
-                    key = (normalized_cause, effect_name)
-                    if key in seen_keys:
-                        logger.info(
-                            f"Skipping duplicate hypothesis for cause '{normalized_cause}' and effect '{effect_name}'"
-                        )
-                        continue
-
-                    test_methods = []
-                    for raw_method in hyp_data.get("test_methods", []):
-                        parsed_method = _parse_test_method(raw_method)
-                        if parsed_method:
-                            test_methods.append(parsed_method)
-                        else:
-                            logger.warning(f"Skipping unknown test method '{raw_method}'")
-
                     hypothesis = Hypothesis(
                         session_id=session_id,
-                        cause=normalized_cause,
-                        effect=effect_name,
+                        cause=hyp_data["cause"],
+                        effect=hyp_data.get("effect", opportunity.metric_name),
                         mechanism=hyp_data["mechanism"],
                         confounders=hyp_data.get("confounders", []),
                         mediators=hyp_data.get("mediators", []),
                         moderators=hyp_data.get("moderators", []),
-                        test_methods=test_methods,
+                        test_methods=self._normalize_test_methods(
+                            hyp_data.get("test_methods", [])
+                        ),
                         data_requirements=hyp_data.get("data_requirements", []),
                         likelihood=Likelihood(hyp_data.get("likelihood", "medium")),
                         rationale=hyp_data.get("rationale", ""),
                     )
-                    seen_keys.add(key)
                     hypotheses.append(hypothesis)
                     logger.info(f"Generated hypothesis {i+1}: {hypothesis.cause} → {hypothesis.effect}")
 
@@ -230,6 +112,30 @@ class HypothesisGeneratorNode:
         except Exception as e:
             logger.error(f"Failed to generate hypotheses: {e}")
             return []
+
+    def _normalize_test_methods(self, raw_methods: list[str]) -> list[TestMethod]:
+        """Map LLM-provided method names to supported TestMethod enums."""
+
+        normalized: list[TestMethod] = []
+
+        for method in raw_methods:
+            if not method:
+                continue
+
+            method_key = method.strip().lower()
+            mapped_value = self._TEST_METHOD_ALIASES.get(method_key, method_key)
+
+            try:
+                normalized.append(TestMethod(mapped_value))
+            except ValueError:
+                logger.warning(
+                    f"Unsupported test method '{method}', skipping in favor of defaults"
+                )
+
+        if not normalized:
+            normalized.append(TestMethod.REGRESSION_ADJUSTMENT)
+
+        return normalized
 
     def _parse_response(self, response_text: str) -> dict[str, Any]:
         """Parse JSON response from LLM.
@@ -257,13 +163,24 @@ class HypothesisGeneratorNode:
             logger.debug(f"Response text: {response_text[:500]}")
             return {"hypotheses": []}
 
-    async def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
-        """LangGraph node function (async)."""
+    def __call__(self, state: dict[str, Any]) -> dict[str, Any]:
+        """LangGraph node function (sync wrapper).
+
+        Args:
+            state: Graph state
+
+        Returns:
+            Updated state
+        """
+        import asyncio
+
         opportunity = state["opportunity"]
         session_id = state["session_id"]
         business_context = state.get("business_context")
 
-        hypotheses = await self.generate(opportunity, session_id, business_context)
+        hypotheses = asyncio.run(
+            self.generate(opportunity, session_id, business_context)
+        )
 
         state["hypotheses"] = hypotheses
         state["hypotheses_count"] = len(hypotheses)

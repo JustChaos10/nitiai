@@ -82,9 +82,8 @@ Focus on:
 3. Economic factors (price sensitivity, promotions, value perception)
 4. Lifecycle timing (onboarding, activation, habit formation)
 
+For each hypothesis:
 - Be specific about the causal variable (not vague like "customer satisfaction")
-- Always reference one of the listed features as the cause (use the exact column name) and compare it against a realistic threshold or state (e.g., `first_delivery_days > 3`, `product_category = "electronics"`, `order_value > 100`).
-- Avoid inventing new feature names that don't appear above. If you need to describe a derived concept, explain how it maps to the provided features.
 - Explain the causal mechanism clearly
 - Identify potential confounders that could create spurious correlation
 - Suggest appropriate statistical tests

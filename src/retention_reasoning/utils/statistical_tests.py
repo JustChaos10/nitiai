@@ -6,13 +6,10 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from scipy import stats
-from scipy.stats import pointbiserialr
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import StandardScaler
 from statsmodels.tsa.stattools import grangercausalitytests
-from statsmodels.sandbox.regression.gmm import IV2SLS
-import statsmodels.api as sm
 
 from ..models.hypothesis import Confidence, TestMethod, TestResult
 
@@ -259,20 +256,6 @@ class StatisticalTests:
             )
             data = pd.concat([data, controls], axis=1).dropna()
 
-            # Require numeric treatment/outcome
-            if not pd.api.types.is_numeric_dtype(data["treatment"]) or not pd.api.types.is_numeric_dtype(data["outcome"]):
-                return TestResult(
-                    hypothesis_id=hypothesis_id,
-                    method=TestMethod.REGRESSION_ADJUSTMENT,
-                    is_significant=False,
-                    p_value=1.0,
-                    effect_size=0.0,
-                    effect_direction="none",
-                    confidence=Confidence.LOW,
-                    sample_size=len(data),
-                    warnings=["Non-numeric treatment or outcome; regression skipped"],
-                )
-
             if len(data) < 30:
                 return TestResult(
                     hypothesis_id=hypothesis_id,
@@ -280,32 +263,6 @@ class StatisticalTests:
                     is_significant=False,
                     confidence=Confidence.LOW,
                     warnings=["Insufficient sample size for regression (< 30)"],
-                )
-
-            if data["treatment"].nunique() <= 1:
-                return TestResult(
-                    hypothesis_id=hypothesis_id,
-                    method=TestMethod.REGRESSION_ADJUSTMENT,
-                    is_significant=False,
-                    p_value=1.0,
-                    effect_size=0.0,
-                    effect_direction="none",
-                    confidence=Confidence.LOW,
-                    sample_size=len(data),
-                    warnings=["Treatment variable has no variation"],
-                )
-
-            if data["outcome"].nunique() <= 1:
-                return TestResult(
-                    hypothesis_id=hypothesis_id,
-                    method=TestMethod.REGRESSION_ADJUSTMENT,
-                    is_significant=False,
-                    p_value=1.0,
-                    effect_size=0.0,
-                    effect_direction="none",
-                    confidence=Confidence.LOW,
-                    sample_size=len(data),
-                    warnings=["Outcome variable has no variation"],
                 )
 
             # Fit regression model
@@ -370,147 +327,6 @@ class StatisticalTests:
                 is_significant=False,
                 confidence=Confidence.LOW,
                 warnings=[f"Test failed: {str(e)}"],
-            )
-
-    def instrumental_variables(
-        self,
-        treatment: pd.Series,
-        outcome: pd.Series,
-        instruments: pd.DataFrame | None,
-        hypothesis_id: str,
-        controls: pd.DataFrame | None = None,
-    ) -> TestResult:
-        """Simple two-stage least squares using provided instruments."""
-        try:
-            if instruments is None or instruments.empty:
-                return TestResult(
-                    hypothesis_id=hypothesis_id,
-                    method=TestMethod.INSTRUMENTAL_VARIABLES,
-                    is_significant=False,
-                    effect_size=0.0,
-                    effect_direction="none",
-                    p_value=1.0,
-                    confidence=Confidence.LOW,
-                    warnings=["No instruments provided for IV estimation"],
-                )
-
-            data_parts = {"treatment": treatment, "outcome": outcome}
-            data = pd.concat([pd.DataFrame(data_parts), instruments], axis=1)
-            if controls is not None and not controls.empty:
-                data = pd.concat([data, controls], axis=1)
-            data = data.dropna()
-
-            if len(data) < 30:
-                return TestResult(
-                    hypothesis_id=hypothesis_id,
-                    method=TestMethod.INSTRUMENTAL_VARIABLES,
-                    is_significant=False,
-                    effect_size=0.0,
-                    effect_direction="none",
-                    p_value=1.0,
-                    confidence=Confidence.LOW,
-                    sample_size=len(data),
-                    warnings=["Insufficient sample size for IV (< 30)"],
-                )
-
-            # Build matrices
-            y = data["outcome"]
-            X = sm.add_constant(data["treatment"])
-            Z = sm.add_constant(instruments)
-            if controls is not None and not controls.empty:
-                controls_df = controls.loc[data.index]
-                X = pd.concat([X, controls_df], axis=1)
-                Z = pd.concat([Z, controls_df], axis=1)
-
-            iv_model = IV2SLS(y, X, Z)
-            results = iv_model.fit()
-
-            coef_idx = 1  # coefficient for treatment after constant
-            treatment_coef = results.params.iloc[coef_idx] if len(results.params) > 1 else 0.0
-            treatment_se = results.bse.iloc[coef_idx] if len(results.bse) > 1 else 0.0
-            p_value = results.pvalues.iloc[coef_idx] if len(results.pvalues) > 1 else 1.0
-
-            is_significant = p_value < self.significance_level
-            effect_direction = "positive" if treatment_coef > 0 else "negative" if treatment_coef < 0 else "none"
-            outcome_std = y.std()
-            effect_size = abs(treatment_coef / outcome_std) if outcome_std > 0 else 0
-            confidence = self._determine_confidence(p_value, len(data), effect_size)
-
-            return TestResult(
-                hypothesis_id=hypothesis_id,
-                method=TestMethod.INSTRUMENTAL_VARIABLES,
-                is_significant=is_significant,
-                p_value=p_value,
-                effect_size=effect_size,
-                effect_direction=effect_direction,
-                point_estimate=treatment_coef,
-                standard_error=treatment_se,
-                confidence_interval=(
-                    treatment_coef - 1.96 * treatment_se,
-                    treatment_coef + 1.96 * treatment_se,
-                ),
-                confidence=confidence,
-                sample_size=len(data),
-                test_statistics={
-                    "first_stage_f": getattr(results, "f_stat", None),
-                    "r_squared": getattr(results, "rsquared", None),
-                    "n_instruments": instruments.shape[1],
-                },
-                warnings=[] if is_significant else ["IV estimate not significant"],
-            )
-        except Exception as e:
-            return TestResult(
-                hypothesis_id=hypothesis_id,
-                method=TestMethod.INSTRUMENTAL_VARIABLES,
-                is_significant=False,
-                confidence=Confidence.LOW,
-                effect_size=0.0,
-                effect_direction="none",
-                p_value=1.0,
-                warnings=[f"IV estimation failed: {str(e)}"],
-            )
-
-    def basic_correlation_test(
-        self,
-        treatment: pd.Series,
-        outcome: pd.Series,
-        hypothesis_id: str,
-    ) -> TestResult:
-        """Fallback simple test using point-biserial correlation (binary outcome)."""
-        try:
-            # Ensure alignment and drop nulls
-            df = pd.DataFrame({"treatment": treatment, "outcome": outcome}).dropna()
-            if df.empty:
-                return TestResult(
-                    hypothesis_id=hypothesis_id,
-                    method=TestMethod.REGRESSION_ADJUSTMENT,
-                    is_significant=False,
-                    confidence=Confidence.LOW,
-                    warnings=["No data after dropping nulls"],
-                )
-
-            r, p_value = pointbiserialr(df["treatment"], df["outcome"])
-            is_significant = p_value < self.significance_level if p_value is not None else False
-            effect_size = abs(r) if r is not None and not np.isnan(r) else 0.0
-            confidence = self._determine_confidence(p_value or 1.0, len(df), effect_size)
-
-            return TestResult(
-                hypothesis_id=hypothesis_id,
-                method=TestMethod.REGRESSION_ADJUSTMENT,
-                is_significant=is_significant,
-                p_value=p_value,
-                effect_size=effect_size,
-                effect_direction="positive" if r and r > 0 else "negative" if r and r < 0 else "none",
-                confidence=confidence,
-                sample_size=len(df),
-            )
-        except Exception as e:
-            return TestResult(
-                hypothesis_id=hypothesis_id,
-                method=TestMethod.REGRESSION_ADJUSTMENT,
-                is_significant=False,
-                confidence=Confidence.LOW,
-                warnings=[f"Fallback correlation test failed: {str(e)}"],
             )
 
     def _calculate_balance(self, treated: pd.DataFrame, control: pd.DataFrame) -> float:
