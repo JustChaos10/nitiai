@@ -3,6 +3,8 @@
 from typing import Any
 from loguru import logger
 
+from ..utils.hypothesis_utils import hypothesis_to_dict
+
 
 class ExplanationGeneratorNode:
     """Generates human-readable explanations of causal findings using LLM."""
@@ -77,18 +79,19 @@ class ExplanationGeneratorNode:
         # Build context for LLM
         hypotheses_summary = []
         for hyp in validated_hypotheses:
-            cause = hyp.get("cause", "unknown")
-            effect = hyp.get("effect", "unknown")
-            mechanism = hyp.get("mechanism", "")
+            hyp_dict = hypothesis_to_dict(hyp)
+            cause = hyp_dict.get("cause", "unknown")
+            effect = hyp_dict.get("effect", "unknown")
+            mechanism = hyp_dict.get("mechanism", "")
 
             # Get statistical evidence
-            consensus = hyp.get("consensus", {})
+            consensus = hyp_dict.get("consensus") or {}
             p_value = consensus.get("p_value", 1.0)
             effect_size = consensus.get("effect_size", 0.0)
             confidence = consensus.get("confidence", 0.0)
 
             # Get causal structure
-            causal_structure = hyp.get("causal_structure", {})
+            causal_structure = hyp_dict.get("causal_structure") or {}
             direct_effect = causal_structure.get("direct_effect", 0.0)
             indirect_effect = causal_structure.get("indirect_effect", 0.0)
             mediators = causal_structure.get("mediators", [])
@@ -169,15 +172,16 @@ Explanation:"""
         parts.append("### Causal Relationships:\n")
 
         for hyp in validated_hypotheses:
-            cause = hyp.get("cause", "unknown")
-            effect = hyp.get("effect", "unknown")
-            mechanism = hyp.get("mechanism", "")
+            hyp_dict = hypothesis_to_dict(hyp)
+            cause = hyp_dict.get("cause", "unknown")
+            effect = hyp_dict.get("effect", "unknown")
+            mechanism = hyp_dict.get("mechanism", "")
 
-            consensus = hyp.get("consensus", {})
+            consensus = hyp_dict.get("consensus") or {}
             p_value = consensus.get("p_value", 1.0)
             effect_size = consensus.get("effect_size", 0.0)
 
-            causal_structure = hyp.get("causal_structure", {})
+            causal_structure = hyp_dict.get("causal_structure") or {}
             direct_effect = causal_structure.get("direct_effect", 0.0)
             indirect_effect = causal_structure.get("indirect_effect", 0.0)
             mediators = causal_structure.get("mediators", [])
@@ -206,11 +210,13 @@ Explanation:"""
         parts.append("### Key Insights:\n")
 
         # Identify strongest cause
-        strongest = max(
-            validated_hypotheses,
-            key=lambda h: abs(h.get("consensus", {}).get("effect_size", 0.0)),
-            default=None,
-        )
+        strongest = None
+        if validated_hypotheses:
+            strongest = max(
+                (hypothesis_to_dict(h) for h in validated_hypotheses),
+                key=lambda h: abs(h.get("consensus", {}).get("effect_size", 0.0)),
+                default=None,
+            )
         if strongest:
             cause = strongest.get("cause", "").replace("_", " ")
             effect_size = strongest.get("consensus", {}).get("effect_size", 0.0)
@@ -220,7 +226,11 @@ Explanation:"""
             )
 
         # Identify mediated effects
-        mediated = [h for h in validated_hypotheses if h.get("causal_structure", {}).get("mediators")]
+        mediated = [
+            hypothesis_to_dict(h)
+            for h in validated_hypotheses
+            if (hypothesis_to_dict(h).get("causal_structure", {}) or {}).get("mediators")
+        ]
         if mediated:
             parts.append(
                 f"- **Indirect effects detected**: {len(mediated)} factor(s) work through mediating variables\n"
@@ -229,7 +239,7 @@ Explanation:"""
         # Add recommendation
         parts.append("\n### Recommendation:\n")
         if strongest:
-            actionable_lever = strongest.get("causal_structure", {}).get("actionable_lever", "")
+            actionable_lever = (strongest.get("causal_structure", {}) or {}).get("actionable_lever", "")
             if actionable_lever:
                 parts.append(
                     f"Focus intervention on: **{actionable_lever}** to address the primary causal driver.\n"

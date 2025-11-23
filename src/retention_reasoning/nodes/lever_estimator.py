@@ -3,6 +3,8 @@
 from typing import Any
 from loguru import logger
 
+from ..utils.hypothesis_utils import hypothesis_to_dict
+
 
 class LeverEstimatorNode:
     """Estimates and ranks intervention levers by expected impact."""
@@ -69,9 +71,10 @@ class LeverEstimatorNode:
         lever_map = {}  # lever_name -> accumulated impact
 
         for hyp in validated_hypotheses:
-            cause = hyp.get("cause", "")
-            consensus = hyp.get("consensus", {})
-            causal_structure = hyp.get("causal_structure", {})
+            hyp_dict = hypothesis_to_dict(hyp)
+            cause = hyp_dict.get("cause", "")
+            consensus = hyp_dict.get("consensus") or {}
+            causal_structure = hyp_dict.get("causal_structure") or {}
 
             # Get statistical metrics
             effect_size = abs(consensus.get("effect_size", 0.0))
@@ -115,8 +118,8 @@ class LeverEstimatorNode:
             lever_map[lever_name]["affected_hypotheses"].append(
                 {
                     "cause": cause,
-                    "effect": hyp.get("effect", ""),
-                    "mechanism": hyp.get("mechanism", ""),
+                    "effect": hyp_dict.get("effect", ""),
+                    "mechanism": hyp_dict.get("mechanism", ""),
                     "effect_size": effect_size,
                 }
             )

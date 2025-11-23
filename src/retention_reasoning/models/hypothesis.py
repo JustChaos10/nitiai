@@ -75,6 +75,10 @@ class Hypothesis(BaseModel):
     validated: bool | None = None
     test_results: list["TestResult"] = Field(default_factory=list)
     causal_structure: "CausalStructure | None" = None
+    consensus: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Aggregated consensus statistics across tests",
+    )
 
     # Metadata
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -88,6 +92,23 @@ Mechanism: {self.mechanism}
 Likelihood: {self.likelihood.value}
 Confounders: {', '.join(self.confounders) if self.confounders else 'None identified'}
         """.strip()
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly representation of the hypothesis."""
+
+        data = self.model_dump(mode="json")
+        return data
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Dictionary-like getter used throughout the pipeline."""
+
+        return self.as_dict().get(key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        return self.as_dict()[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.as_dict()
 
 
 class TestResult(BaseModel):

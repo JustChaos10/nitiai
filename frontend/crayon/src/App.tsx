@@ -1,9 +1,8 @@
-import { useEffect, useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import axios from "axios";
-import { AgentLayout, MessageList, MessageInput } from "@crayonai/react-ui";
-import "@crayonai/react-ui/dist/style.css";
 import { ReasoningGraph } from "./components/ReasoningGraph";
 import { HypothesisExplorer } from "./components/HypothesisExplorer";
+import "./App.css";
 
 type Hypothesis = {
   id: string;
@@ -33,190 +32,265 @@ type CausalGraph = {
   }>;
 };
 
+type Message = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  template?: "analysis_result" | "hypotheses" | "causal_graph";
+  data?: any;
+};
+
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
 const defaultPayload = {
   opportunity: {
+    type: "churn_spike",
     title: "High churn in recent cohort",
     description: "Recent customers show elevated churn rates",
+    affected_cohort: {
+      description: "All customers",
+    },
     metric_name: "churn_30d",
     baseline_value: 0.15,
     current_value: 0.18,
     sample_size: 500,
     severity: "high",
-    type: "churn_spike",
-    cohort: { description: "All customers" },
-    business_context: { recent_changes: "Warehouse delays" },
+    business_context: {
+      recent_changes: "Warehouse delays",
+    },
   },
   data_preview: null,
   business_context: "Recent shipping delays",
 };
 
-function App() {
-  const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
-  const [hypotheses, setHypotheses] = useState<Hypothesis[]>([]);
-  const [causalGraph, setCausalGraph] = useState<CausalGraph | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState<"chat" | "hypotheses" | "graph">("chat");
+function AnalysisResultComponent({ data }: { data: any }) {
+  return (
+    <div style={{ padding: "16px", backgroundColor: "#f8fafc", borderRadius: "8px", marginTop: "12px" }}>
+      <h3 style={{ margin: "0 0 12px 0", fontSize: "16px", fontWeight: 600 }}>Analysis Results</h3>
+      
+      {data.validated_causes && data.validated_causes.length > 0 && (
+        <div style={{ marginBottom: "12px" }}>
+          <strong>Validated Causes:</strong>
+          <div style={{ marginTop: "4px" }}>
+            {data.validated_causes.map((cause: string) => (
+              <span key={cause} style={{ display: "inline-block", padding: "4px 8px", backgroundColor: "#d1fae5", color: "#065f46", borderRadius: "4px", marginRight: "8px", marginTop: "4px", fontSize: "12px" }}>
+                {cause}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
-  const runAnalysis = async (payloadText: string) => {
+      {data.explanation && (
+        <div style={{ marginBottom: "12px" }}>
+          <strong>Explanation:</strong>
+          <p style={{ margin: "4px 0 0 0", fontSize: "14px", color: "#475569" }}>{data.explanation}</p>
+        </div>
+      )}
+
+      {data.hypotheses && data.hypotheses.length > 0 && (
+        <div>
+          <strong>Hypotheses Generated: {data.hypotheses.length}</strong>
+          <div style={{ marginTop: "8px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+            {data.hypotheses.slice(0, 4).map((h: Hypothesis) => (
+              <div key={h.id} style={{ padding: "8px", backgroundColor: "white", borderRadius: "4px", borderLeft: `3px solid ${h.validated ? "#10b981" : "#ef4444"}` }}>
+                <div style={{ fontSize: "12px", fontWeight: 600 }}>{h.cause} → {h.effect}</div>
+                <div style={{ fontSize: "11px", color: "#64748b" }}>{h.validated ? "✓ Validated" : "✗ Not validated"}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HypothesesComponent({ data }: { data: Hypothesis[] }) {
+  return (
+    <div style={{ marginTop: "12px" }}>
+      <HypothesisExplorer hypotheses={data} onHypothesisSelect={(h) => console.log("Selected:", h)} />
+    </div>
+  );
+}
+
+function GraphComponent({ data }: { data: CausalGraph }) {
+  return (
+    <div style={{ marginTop: "12px" }}>
+      <ReasoningGraph graph={data} onNodeClick={(nodeId) => console.log("Clicked node:", nodeId)} />
+    </div>
+  );
+}
+
+function App() {
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      id: "welcome",
+      role: "assistant",
+      content: "Welcome to the Retention Reasoning Agent. Paste an opportunity JSON to analyze retention causes.",
+    },
+  ]);
+  const [inputValue, setInputValue] = useState(JSON.stringify(defaultPayload, null, 2));
+  const [loading, setLoading] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  const handleSendMessage = async () => {
+    if (!inputValue.trim()) return;
+
+    // Add user message
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      content: inputValue,
+    };
+    setMessages((prev) => [...prev, userMessage]);
     setLoading(true);
+
     try {
-      const payload = JSON.parse(payloadText);
+      const payload = JSON.parse(inputValue);
       const res = await axios.post(`${API_BASE}/analyze`, payload);
       const { explanation, validated_causes, hypotheses, causal_graph } = res.data;
 
-      setHypotheses(hypotheses || []);
-      setCausalGraph(causal_graph || null);
+      // Add analysis results message
+      const analysisMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: "Analysis complete",
+        template: "analysis_result",
+        data: {
+          validated_causes,
+          explanation,
+          hypotheses,
+          causal_graph,
+        },
+      };
+      setMessages((prev) => [...prev, analysisMessage]);
 
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `Validated causes: ${validated_causes?.join(", ") || "none"}` },
-        { role: "assistant", content: explanation || "No explanation produced." },
-      ]);
-
-      // Auto-switch to hypotheses tab if we have results
+      // Add hypotheses message if available
       if (hypotheses && hypotheses.length > 0) {
-        setActiveTab("hypotheses");
+        const hypothesesMessage: Message = {
+          id: (Date.now() + 2).toString(),
+          role: "assistant",
+          content: `Found ${hypotheses.length} hypotheses to explore`,
+          template: "hypotheses",
+          data: hypotheses,
+        };
+        setMessages((prev) => [...prev, hypothesesMessage]);
       }
+
+      // Add graph message if available
+      if (causal_graph) {
+        const graphMessage: Message = {
+          id: (Date.now() + 3).toString(),
+          role: "assistant",
+          content: "Causal structure identified",
+          template: "causal_graph",
+          data: causal_graph,
+        };
+        setMessages((prev) => [...prev, graphMessage]);
+      }
+
+      // Clear input and reset
+      setInputValue(JSON.stringify(defaultPayload, null, 2));
     } catch (err: any) {
-      setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${err.message}` }]);
+      let errorContent = err.message;
+      if (err.response?.data?.detail) {
+        errorContent = typeof err.response.data.detail === 'string' 
+          ? err.response.data.detail 
+          : JSON.stringify(err.response.data.detail, null, 2);
+      }
+
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: "assistant",
+        content: `Error: ${errorContent}`,
+      };
+      setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    setMessages([{ role: "assistant", content: "Paste an opportunity JSON and press enter to analyze." }]);
-  }, []);
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.ctrlKey && e.key === "Enter") {
+      handleSendMessage();
+    }
+  };
 
   return (
-    <AgentLayout
-      sidebar={
-        <div style={{ padding: 12 }}>
-          <h3>Retention Reasoning Agent</h3>
-          <p style={{ fontSize: 12, color: "#64748b" }}>Backend: {API_BASE}</p>
-          <hr style={{ margin: "12px 0", border: "none", borderTop: "1px solid #e2e8f0" }} />
-          <div style={{ fontSize: 12 }}>
-            <div style={{ marginBottom: 8 }}>
-              <strong>Hypotheses:</strong> {hypotheses.length}
+    <div className="crayon-app">
+      <div className="crayon-header">
+        <h1>Retention Reasoning Agent</h1>
+        <p>Powered by Causal Inference & LLM-Generated Hypotheses</p>
+      </div>
+
+      <div className="crayon-container">
+        <div className="crayon-messages">
+          {messages.map((msg) => (
+            <div key={msg.id} className={`message-wrapper ${msg.role}`}>
+              <div className={`message-bubble ${msg.role}`}>
+                {msg.role === "assistant" && <div className="assistant-avatar">🤖</div>}
+                
+                <div className="message-content">
+                  <p>{msg.content}</p>
+
+                  {msg.template === "analysis_result" && msg.data && (
+                    <AnalysisResultComponent data={msg.data} />
+                  )}
+
+                  {msg.template === "hypotheses" && msg.data && (
+                    <HypothesesComponent data={msg.data} />
+                  )}
+
+                  {msg.template === "causal_graph" && msg.data && (
+                    <GraphComponent data={msg.data} />
+                  )}
+                </div>
+
+                {msg.role === "user" && <div className="user-avatar">👤</div>}
+              </div>
             </div>
-            <div>
-              <strong>Validated:</strong> {hypotheses.filter((h) => h.validated).length}
+          ))}
+          {loading && (
+            <div className="message-wrapper assistant">
+              <div className="message-bubble assistant">
+                <div className="assistant-avatar">🤖</div>
+                <div className="message-content">
+                  <p className="loading-text">Analyzing...</p>
+                </div>
+              </div>
             </div>
-          </div>
+          )}
+          <div ref={messagesEndRef} />
         </div>
-      }
-      main={
-        <>
-          {/* Tab Navigation */}
-          <div style={{ display: "flex", gap: "8px", marginBottom: "16px", borderBottom: "1px solid #e2e8f0" }}>
-            <button
-              onClick={() => setActiveTab("chat")}
-              style={{
-                padding: "8px 16px",
-                border: "none",
-                background: activeTab === "chat" ? "#3b82f6" : "transparent",
-                color: activeTab === "chat" ? "white" : "#64748b",
-                cursor: "pointer",
-                borderRadius: "4px 4px 0 0",
-                fontWeight: activeTab === "chat" ? 600 : 400,
-              }}
-            >
-              Chat
-            </button>
-            <button
-              onClick={() => setActiveTab("hypotheses")}
-              style={{
-                padding: "8px 16px",
-                border: "none",
-                background: activeTab === "hypotheses" ? "#3b82f6" : "transparent",
-                color: activeTab === "hypotheses" ? "white" : "#64748b",
-                cursor: "pointer",
-                borderRadius: "4px 4px 0 0",
-                fontWeight: activeTab === "hypotheses" ? 600 : 400,
-              }}
-            >
-              Hypotheses ({hypotheses.length})
-            </button>
-            <button
-              onClick={() => setActiveTab("graph")}
-              style={{
-                padding: "8px 16px",
-                border: "none",
-                background: activeTab === "graph" ? "#3b82f6" : "transparent",
-                color: activeTab === "graph" ? "white" : "#64748b",
-                cursor: "pointer",
-                borderRadius: "4px 4px 0 0",
-                fontWeight: activeTab === "graph" ? 600 : 400,
-              }}
-              disabled={!causalGraph}
-            >
-              Causal Graph
-            </button>
-          </div>
 
-          {/* Tab Content */}
-          {activeTab === "chat" && (
-            <>
-              <MessageList messages={messages} />
-              <MessageInput
-                disabled={loading}
-                placeholder="Paste opportunity JSON"
-                initialValue={JSON.stringify(defaultPayload, null, 2)}
-                onSend={(text) => runAnalysis(text)}
-              />
-            </>
-          )}
-
-          {activeTab === "hypotheses" && (
-            <div style={{ height: "600px" }}>
-              {hypotheses.length > 0 ? (
-                <HypothesisExplorer
-                  hypotheses={hypotheses}
-                  onHypothesisSelect={(h) => console.log("Selected:", h)}
-                />
-              ) : (
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    height: "100%",
-                    color: "#94a3b8",
-                  }}
-                >
-                  No hypotheses available. Run an analysis first.
-                </div>
-              )}
-            </div>
-          )}
-
-          {activeTab === "graph" && (
-            <div>
-              {causalGraph ? (
-                <ReasoningGraph
-                  graph={causalGraph}
-                  onNodeClick={(nodeId) => console.log("Clicked node:", nodeId)}
-                />
-              ) : (
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    height: "400px",
-                    color: "#94a3b8",
-                  }}
-                >
-                  No causal graph available. Run an analysis first.
-                </div>
-              )}
-            </div>
-          )}
-        </>
-      }
-    />
+        <div className="crayon-input-area">
+          <textarea
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyPress={handleKeyPress}
+            disabled={loading}
+            className="crayon-input"
+            placeholder="Paste opportunity JSON here... (Ctrl+Enter to send)"
+            rows={6}
+          />
+          <button
+            onClick={handleSendMessage}
+            disabled={loading || !inputValue.trim()}
+            className="crayon-send-btn"
+          >
+            {loading ? "Analyzing..." : "Analyze"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

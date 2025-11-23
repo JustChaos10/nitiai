@@ -19,30 +19,35 @@ from .utils import (
     InterventionScenario,
     ActiveLearner,
 )
+from .utils.hypothesis_utils import hypothesis_to_dict
 
 
 def format_hypotheses_for_frontend(hypotheses: list[Any]) -> list[dict]:
     """Format hypotheses for frontend consumption."""
     formatted = []
     for hyp in hypotheses:
+        hyp_dict = hypothesis_to_dict(hyp)
+        validated_flag = hyp_dict.get("validated")
         formatted_hyp = {
-            "id": hyp.get("id", f"h{len(formatted)}"),
-            "cause": hyp.get("cause", "unknown"),
-            "effect": hyp.get("effect", "unknown"),
-            "mechanism": hyp.get("mechanism", ""),
-            "validated": hyp.get("validated", False),
+            "id": hyp_dict.get("id")
+            or hyp_dict.get("hypothesis_id")
+            or f"h{len(formatted)}",
+            "cause": hyp_dict.get("cause", "unknown"),
+            "effect": hyp_dict.get("effect", "unknown"),
+            "mechanism": hyp_dict.get("mechanism", ""),
+            "validated": bool(validated_flag) if validated_flag is not None else False,
         }
 
         # Add test results if available
-        if "consensus" in hyp:
-            consensus = hyp["consensus"]
+        consensus = hyp_dict.get("consensus") or {}
+        if consensus:
             formatted_hyp["confidence"] = consensus.get("confidence", 0.0)
             formatted_hyp["p_value"] = consensus.get("p_value", 1.0)
             formatted_hyp["effect_size"] = consensus.get("effect_size", 0.0)
 
         # Add causal structure if available
-        if "causal_structure" in hyp:
-            cs = hyp["causal_structure"]
+        cs = hyp_dict.get("causal_structure") or {}
+        if cs:
             formatted_hyp["causal_structure"] = {
                 "direct_effect": cs.get("direct_effect", 0.0),
                 "indirect_effect": cs.get("indirect_effect", 0.0),
@@ -62,11 +67,13 @@ def build_causal_graph(hypotheses: list[Any]) -> dict:
     edges = []
 
     for hyp in hypotheses:
-        if not hyp.get("validated", False):
+        hyp_dict = hypothesis_to_dict(hyp)
+
+        if not hyp_dict.get("validated", False):
             continue
 
-        cause = hyp.get("cause", "")
-        effect = hyp.get("effect", "")
+        cause = hyp_dict.get("cause", "")
+        effect = hyp_dict.get("effect", "")
 
         if cause and effect:
             nodes_set.add(cause)
@@ -76,11 +83,12 @@ def build_causal_graph(hypotheses: list[Any]) -> dict:
             edge_type = "direct"
             strength = 0.5
 
-            if "consensus" in hyp:
-                strength = hyp["consensus"].get("effect_size", 0.5)
+            consensus = hyp_dict.get("consensus") or {}
+            if consensus:
+                strength = consensus.get("effect_size", 0.5)
 
-            if "causal_structure" in hyp:
-                cs = hyp["causal_structure"]
+            cs = hyp_dict.get("causal_structure") or {}
+            if cs:
                 # Add mediators as nodes
                 for mediator in cs.get("mediators", []):
                     nodes_set.add(mediator)
@@ -115,18 +123,98 @@ def build_causal_graph(hypotheses: list[Any]) -> dict:
     }
 
 
-def create_app(agent: RetentionReasoningAgent):
+try:
+    from fastapi import FastAPI, HTTPException
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import StreamingResponse, JSONResponse
+    from fastapi.exceptions import RequestValidationError
+    from pydantic import BaseModel
+except ImportError:
+    FastAPI = None
+    BaseModel = object
+
+
+class AnalyzeRequest(BaseModel):
+    opportunity: Dict[str, Any]
+    data_preview: list[dict[str, Any]] | None = None
+    business_context: str | None = None
+
+
+class ABTestRequest(BaseModel):
+    hypotheses: list[dict[str, Any]]
+    baseline_rates: dict[str, float]
+    daily_traffic: int = 1000
+
+
+class HeterogeneousRequest(BaseModel):
+    data: list[dict[str, Any]]
+    treatment_col: str
+    outcome_col: str
+    subgroup_features: list[str]
+    hypothesis_id: str = "unknown"
+
+
+class SimulateRequest(BaseModel):
+    data: list[dict[str, Any]]
+    intervention_name: str
+    target_variable: str
+    intervention_type: str
+    intervention_value: float
+    outcome_variable: str
+    condition: str | None = None
+
+
+class UncertaintyRequest(BaseModel):
+    hypothesis: dict[str, Any]
+    data: list[dict[str, Any]]
+    test_results: dict[str, Any] | None = None
+
+
+def create_app(agent: RetentionReasoningAgent | None = None):
     """Return a FastAPI app wired to the provided agent.
 
     FastAPI is an optional dependency; this function will raise a clear error if it is missing.
     """
-    try:
-        from fastapi import FastAPI, HTTPException
-        from pydantic import BaseModel
-        from fastapi.middleware.cors import CORSMiddleware
-        from fastapi.responses import StreamingResponse
-    except Exception as exc:  # pragma: no cover - import guard
-        raise ImportError("FastAPI is required: pip install fastapi uvicorn") from exc
+    if FastAPI is None:
+        raise ImportError("FastAPI is required: pip install fastapi uvicorn")
+
+    # If no agent provided, create a default one
+    if agent is None:
+        from langchain_groq import ChatGroq
+        from dotenv import load_dotenv
+        
+        # Load environment variables
+        load_dotenv()
+        
+        # Initialize LLM from environment variables
+        groq_api_key = os.getenv("GROQ_API_KEY")
+        if not groq_api_key:
+            raise ValueError("GROQ_API_KEY not found in environment variables")
+
+        groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        groq_temperature = float(os.getenv("GROQ_TEMPERATURE", "0.2"))
+        groq_max_output = int(os.getenv("GROQ_MAX_OUTPUT", "4096"))
+
+        llm = ChatGroq(
+            model=groq_model,
+            groq_api_key=groq_api_key,
+            temperature=groq_temperature,
+            max_tokens=groq_max_output,
+        )
+        
+        # Default available features
+        available_features = [
+            "first_delivery_days",
+            "onboarding_engagement_score",
+            "order_value",
+            "product_category",
+            "churn_30d",
+        ]
+        
+        agent = RetentionReasoningAgent(
+            llm=llm,
+            available_features=available_features,
+        )
 
     app = FastAPI(title="Retention Reasoning Agent")
     app.add_middleware(
@@ -136,17 +224,20 @@ def create_app(agent: RetentionReasoningAgent):
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request, exc):
+        logger.error("Validation error %s", exc.errors())
+        return JSONResponse(
+            status_code=422,
+            content={"detail": exc.errors()},
+        )
     # Initialize standalone services (no platform integration)
     ab_tester = ABTestRecommender()
     het_estimator = HeterogeneousEffectEstimator()
     simulator = InterventionSimulator()
     learner = ActiveLearner()
     cache = get_cache()
-
-    class AnalyzeRequest(BaseModel):
-        opportunity: Dict[str, Any]
-        data_preview: list[dict[str, Any]] | None = None
-        business_context: str | None = None
 
     @app.get("/health")
     def health():
@@ -209,11 +300,6 @@ def create_app(agent: RetentionReasoningAgent):
 
     # New endpoints for advanced features
 
-    class ABTestRequest(BaseModel):
-        hypotheses: list[dict[str, Any]]
-        baseline_rates: dict[str, float]
-        daily_traffic: int = 1000
-
     @app.post("/ab-test")
     async def generate_ab_tests(payload: ABTestRequest):
         """Generate A/B test designs for hypotheses."""
@@ -229,13 +315,6 @@ def create_app(agent: RetentionReasoningAgent):
         except Exception as exc:
             logger.exception("A/B test generation failed")
             raise HTTPException(status_code=500, detail=str(exc))
-
-    class HeterogeneousRequest(BaseModel):
-        data: list[dict[str, Any]]
-        treatment_col: str
-        outcome_col: str
-        subgroup_features: list[str]
-        hypothesis_id: str = "unknown"
 
     @app.post("/heterogeneous")
     async def analyze_heterogeneity(payload: HeterogeneousRequest):
@@ -253,15 +332,6 @@ def create_app(agent: RetentionReasoningAgent):
         except Exception as exc:
             logger.exception("Heterogeneity analysis failed")
             raise HTTPException(status_code=500, detail=str(exc))
-
-    class SimulateRequest(BaseModel):
-        data: list[dict[str, Any]]
-        intervention_name: str
-        target_variable: str
-        intervention_type: str
-        intervention_value: float
-        outcome_variable: str
-        condition: str | None = None
 
     @app.post("/simulate")
     async def simulate_intervention(payload: SimulateRequest):
@@ -284,11 +354,6 @@ def create_app(agent: RetentionReasoningAgent):
         except Exception as exc:
             logger.exception("Simulation failed")
             raise HTTPException(status_code=500, detail=str(exc))
-
-    class UncertaintyRequest(BaseModel):
-        hypothesis: dict[str, Any]
-        data: list[dict[str, Any]]
-        test_results: dict[str, Any] | None = None
 
     @app.post("/uncertainty")
     async def analyze_uncertainty(payload: UncertaintyRequest):

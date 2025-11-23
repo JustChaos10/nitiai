@@ -2,7 +2,7 @@
 
 import pandas as pd
 import numpy as np
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 
 from retention_reasoning import RetentionReasoningAgent
 from retention_reasoning.models import Opportunity, OpportunityType
@@ -70,17 +70,17 @@ def main():
     features.remove("customer_id")
     print(f"\n2. Available features: {features}")
 
-    # Initialize LLM (you'll need to set GOOGLE_API_KEY environment variable)
+    # Initialize LLM (you'll need to set GROQ_API_KEY environment variable)
     print("\n3. Initializing LLM...")
     try:
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.0-flash-exp",
+        llm = ChatGroq(
+            model="llama-3.3-70b-versatile",
             temperature=0.7,
         )
         print("   ✓ LLM initialized")
     except Exception as e:
         print(f"   ✗ Failed to initialize LLM: {e}")
-        print("   Please set GOOGLE_API_KEY environment variable")
+        print("   Please set GROQ_API_KEY environment variable")
         return
 
     # Create agent

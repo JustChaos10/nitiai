@@ -73,7 +73,7 @@ class RetentionReasoningAgent:
             llm=llm,
             available_features=available_features,
         )
-        self.causal_tester = CausalTesterNode(data_loader=data_loader, cache=self.cache)
+        self.causal_tester = CausalTesterNode(data_loader=data_loader)
         self.confounder_analyzer = ConfounderAnalyzerNode()
         self.lever_estimator = LeverEstimatorNode()
         self.explanation_generator = ExplanationGeneratorNode(llm=llm)
@@ -217,10 +217,13 @@ class RetentionReasoningAgent:
         # Factor in test confidence scores from validated hypotheses
         if validated_hypotheses:
             # Average confidence across validated hypotheses
-            confidences = [
-                h.get("consensus", {}).get("confidence", 0.5)
-                for h in validated_hypotheses
-            ]
+            confidences = []
+            for h in validated_hypotheses:
+                consensus = getattr(h, "consensus", None)
+                if isinstance(consensus, dict):
+                    confidences.append(consensus.get("confidence", 0.5))
+                else:
+                    confidences.append(0.5)
             avg_test_confidence = sum(confidences) / len(confidences) if confidences else 0.5
 
             # Weighted average: 70% validation rate, 30% test confidence

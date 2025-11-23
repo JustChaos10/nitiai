@@ -8,6 +8,8 @@ import pandas as pd
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from .hypothesis_utils import hypothesis_to_dict
+
 
 class DataCollectionRecommendation(BaseModel):
     """Recommendation for data to collect."""
@@ -70,9 +72,10 @@ class ActiveLearner:
         Returns:
             UncertaintyAnalysis with recommendations
         """
-        cause = hypothesis.get("cause", "unknown")
-        effect = hypothesis.get("effect", "unknown")
-        confounders = hypothesis.get("confounders", [])
+        hyp_dict = hypothesis_to_dict(hypothesis)
+        cause = hyp_dict.get("cause", "unknown")
+        effect = hyp_dict.get("effect", "unknown")
+        confounders = hyp_dict.get("confounders", [])
 
         # Calculate different sources of uncertainty
         sample_uncertainty = self._assess_sample_size_uncertainty(data, cause, effect)
@@ -92,7 +95,7 @@ class ActiveLearner:
 
         # Generate recommendations
         recommendations = self._generate_recommendations(
-            hypothesis,
+            hyp_dict,
             data,
             sample_uncertainty,
             measurement_uncertainty,
@@ -111,7 +114,8 @@ class ActiveLearner:
         summary = self._generate_summary(overall_uncertainty, recommendations)
 
         return UncertaintyAnalysis(
-            hypothesis_id=hypothesis.get("id", "unknown"),
+            hypothesis_id=hyp_dict.get("id")
+            or hyp_dict.get("hypothesis_id", "unknown"),
             overall_uncertainty=float(overall_uncertainty),
             sample_size_uncertainty=float(sample_uncertainty),
             measurement_uncertainty=float(measurement_uncertainty),
@@ -222,9 +226,10 @@ class ActiveLearner:
         """Generate data collection recommendations based on uncertainty sources."""
         recommendations = []
 
-        cause = hypothesis.get("cause", "unknown")
-        effect = hypothesis.get("effect", "unknown")
-        confounders = hypothesis.get("confounders", [])
+        hyp_dict = hypothesis_to_dict(hypothesis)
+        cause = hyp_dict.get("cause", "unknown")
+        effect = hyp_dict.get("effect", "unknown")
+        confounders = hyp_dict.get("confounders", [])
 
         # Recommendation 1: Increase sample size
         if sample_uncertainty > 0.3:
@@ -370,9 +375,10 @@ class ActiveLearner:
         feature_scores = {}
 
         for hyp in hypotheses:
-            cause = hyp.get("cause", "")
-            effect = hyp.get("effect", "")
-            confounders = hyp.get("confounders", [])
+            hyp_dict = hypothesis_to_dict(hyp)
+            cause = hyp_dict.get("cause", "")
+            effect = hyp_dict.get("effect", "")
+            confounders = hyp_dict.get("confounders", [])
 
             # Score based on availability
             for feature in [cause, effect] + confounders:

@@ -29,6 +29,7 @@ cat > .env << 'EOF'
 GROQ_API_KEY=your_groq_api_key_here
 GROQ_MODEL=llama-3.1-8b-instant
 GROQ_TEMPERATURE=0.7
+GROQ_MAX_OUTPUT=4096
 
 # Or use Google Gemini
 # GOOGLE_API_KEY=your_google_api_key_here
@@ -79,6 +80,8 @@ npm run dev
 ```
 
 Visit http://localhost:5173
+
+> **Tip:** If your backend is not running on `http://localhost:8000`, create a `frontend/crayon/.env` file with `VITE_API_BASE=<your_api_url>` so the Crayon UI talks to the right server.
 
 **Expected**:
 - Crayon UI loads

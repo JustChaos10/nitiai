@@ -18,6 +18,13 @@ from ..prompts.hypothesis_generation import (
 class HypothesisGeneratorNode:
     """Generates causal hypotheses using an LLM."""
 
+    _TEST_METHOD_ALIASES = {
+        "regression_analysis": TestMethod.REGRESSION_ADJUSTMENT.value,
+        "correlation_analysis": TestMethod.REGRESSION_ADJUSTMENT.value,
+        "chi_squared_test": TestMethod.PROPENSITY_MATCHING.value,
+        "survival_analysis": TestMethod.REGRESSION_ADJUSTMENT.value,
+    }
+
     def __init__(
         self,
         llm: BaseChatModel,
@@ -85,9 +92,9 @@ class HypothesisGeneratorNode:
                         confounders=hyp_data.get("confounders", []),
                         mediators=hyp_data.get("mediators", []),
                         moderators=hyp_data.get("moderators", []),
-                        test_methods=[
-                            TestMethod(method) for method in hyp_data.get("test_methods", [])
-                        ],
+                        test_methods=self._normalize_test_methods(
+                            hyp_data.get("test_methods", [])
+                        ),
                         data_requirements=hyp_data.get("data_requirements", []),
                         likelihood=Likelihood(hyp_data.get("likelihood", "medium")),
                         rationale=hyp_data.get("rationale", ""),
@@ -105,6 +112,30 @@ class HypothesisGeneratorNode:
         except Exception as e:
             logger.error(f"Failed to generate hypotheses: {e}")
             return []
+
+    def _normalize_test_methods(self, raw_methods: list[str]) -> list[TestMethod]:
+        """Map LLM-provided method names to supported TestMethod enums."""
+
+        normalized: list[TestMethod] = []
+
+        for method in raw_methods:
+            if not method:
+                continue
+
+            method_key = method.strip().lower()
+            mapped_value = self._TEST_METHOD_ALIASES.get(method_key, method_key)
+
+            try:
+                normalized.append(TestMethod(mapped_value))
+            except ValueError:
+                logger.warning(
+                    f"Unsupported test method '{method}', skipping in favor of defaults"
+                )
+
+        if not normalized:
+            normalized.append(TestMethod.REGRESSION_ADJUSTMENT)
+
+        return normalized
 
     def _parse_response(self, response_text: str) -> dict[str, Any]:
         """Parse JSON response from LLM.

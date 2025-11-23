@@ -76,11 +76,15 @@ cp .env.example .env
 ```python
 from retention_reasoning import RetentionReasoningAgent
 from retention_reasoning.models import Opportunity, OpportunityType
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
+import os
 import pandas as pd
 
-# Initialize LLM
-llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash-exp")
+# Initialize Groq LLM
+llm = ChatGroq(
+  model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+  temperature=float(os.getenv("GROQ_TEMPERATURE", "0.2")),
+)
 
 # Define available features
 features = [

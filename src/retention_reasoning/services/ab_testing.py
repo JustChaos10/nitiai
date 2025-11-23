@@ -8,6 +8,8 @@ from typing import Any, Optional
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from ..utils.hypothesis_utils import hypothesis_to_dict
+
 
 class ABTestDesign(BaseModel):
     """A/B test design specification."""
@@ -349,26 +351,29 @@ class ABTestRecommender:
         designs = []
 
         for hyp in hypotheses:
-            effect = hyp.get("effect", "churn_30d")
+            hyp_dict = hypothesis_to_dict(hyp)
+            effect = hyp_dict.get("effect", "churn_30d")
             baseline = baseline_rates.get(effect, 0.15)
 
             # Use validated effect size if available
             effect_size = 0.10  # Default
-            if "consensus" in hyp and "effect_size" in hyp["consensus"]:
-                effect_size = hyp["consensus"]["effect_size"]
-            elif "expected_effect" in hyp:
-                effect_size = hyp["expected_effect"]
+            consensus = hyp_dict.get("consensus", {})
+            if consensus.get("effect_size") is not None:
+                effect_size = consensus["effect_size"]
+            elif "expected_effect" in hyp_dict:
+                effect_size = hyp_dict["expected_effect"]
 
             try:
                 design = self.design_test(
-                    hypothesis=hyp,
+                    hypothesis=hyp_dict,
                     baseline_rate=baseline,
                     expected_effect_size=effect_size,
                     daily_eligible_users=daily_traffic,
                 )
                 designs.append(design)
             except Exception as exc:
-                logger.warning(f"Failed to design test for hypothesis {hyp.get('id')}: {exc}")
+                hyp_id = hyp_dict.get("id") or hyp_dict.get("hypothesis_id")
+                logger.warning(f"Failed to design test for hypothesis {hyp_id}: {exc}")
 
         # Sort by feasibility (duration ascending)
         designs.sort(key=lambda d: d.expected_duration_days)

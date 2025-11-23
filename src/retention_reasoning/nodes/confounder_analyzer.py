@@ -94,7 +94,7 @@ class ConfounderAnalyzerNode:
         validated_hypotheses = state.get("validated_hypotheses", [])
         data = state.get("data")
 
-        if not data:
+        if data is None or (isinstance(data, pd.DataFrame) and data.empty):
             logger.error("No data provided for confounder analysis")
             return state
 

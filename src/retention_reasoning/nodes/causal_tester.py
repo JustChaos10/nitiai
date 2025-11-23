@@ -108,6 +108,7 @@ class CausalTesterNode:
             meta_results = self.statistical_tests.meta_analysis(test_results)
             hypothesis.validated = meta_results["consensus_causal"]
             hypothesis.test_results = test_results
+            hypothesis.consensus = meta_results
 
             logger.info(
                 f"Hypothesis {hypothesis.hypothesis_id}: "
@@ -156,7 +157,7 @@ class CausalTesterNode:
         hypotheses = state.get("hypotheses", [])
         data = state.get("data")
 
-        if not data:
+        if data is None or (isinstance(data, pd.DataFrame) and data.empty):
             logger.error("No data provided for hypothesis testing")
             state["validated_hypotheses"] = []
             return state
