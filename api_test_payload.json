@@ -1,0 +1,20 @@
+{
+  "opportunity": {
+    "type": "churn_spike",
+    "title": "High churn in recent cohort",
+    "description": "Customers acquired recently show elevated churn rates",
+    "affected_cohort": {
+      "description": "Recent customers with delivery issues"
+    },
+    "metric_name": "churn_30d",
+    "baseline_value": 0.15,
+    "current_value": 0.455,
+    "sample_size": 200,
+    "severity": "high",
+    "business_context": {
+      "recent_changes": "Warehouse delays causing longer delivery times",
+      "product_mix": "Mix of electronics, clothing, and home goods"
+    }
+  },
+  "business_context": "Recent shipping delays due to warehouse issues"
+}
