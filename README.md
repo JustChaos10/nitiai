@@ -35,8 +35,10 @@ The Retention Reasoning Agent is a complete end-to-end system that:
 - 🧠 **LLM-Powered Analysis**: Uses Groq LLM for intelligent hypothesis generation
 - 📊 **Causal Inference**: DoWhy-based causal testing and confounder analysis
 - 🔄 **LangGraph Pipeline**: Structured multi-step reasoning workflow
+- 🛰️ **Event-Level Enrichment**: Aggregates delivery delays, onboarding steps, support tickets, and campaign engagement directly from the events stream
+- 🧪 **Synthetic Ground Truth**: Ships with curated CSVs encoding known causal relationships for validation
 - 🎨 **Modern UI**: Crayon/Thesys-powered chat interface with reasoning visualization
-- 📈 **Statistical Testing**: Chi-square, t-tests, and regression analysis
+- 📈 **Statistical Testing**: Chi-square, t-tests, regression, propensity matching, and Granger causality
 - 🎯 **Actionable Outputs**: Prioritized interventions with confidence scores
 
 ---
@@ -129,6 +131,25 @@ The reasoning agent processes data through 5 specialized nodes:
 | UI Components | @crayonai/react-ui | Styled chat components |
 | Styling | Tailwind CSS | Utility-first styling |
 
+### Data Sources & Enrichment
+
+The repo ships with a synthetic-but-realistic retention dataset under `data/`:
+
+| File | Description | Sample Rows |
+|------|-------------|-------------|
+| `retention_customers.csv` | Customer-level snapshot (600 rows) with churn labels, RFM scores, channels, etc. | 600 |
+| `retention_events.csv` | Event stream (~10k rows) covering deliveries, onboarding steps, support tickets, sessions, and campaigns. | 10,696 |
+| `retention_brand_metrics_daily.csv` | Daily aggregate metrics for trend visualizations. | 3,240 |
+| `shopify_retention_synthetic_dataset.csv` | Alternate customer dataset for experimentation. | 500 |
+
+`DataIngestionService` automatically:
+
+1. Loads these CSVs (or user uploads via `/upload`).
+2. Aggregates events into customer-level causal signals such as `avg_delivery_delay`, `max_delivery_delay`, `had_late_delivery`, `completed_onboarding`, `num_support_tickets`, `session_count`, and `email_open_rate`.
+3. Builds composite risk flags (`high_delay_customer`, `high_causal_risk`, etc.) so downstream nodes can reason about treatment/control cohorts.
+
+Back-end endpoints like `/context`, `/data/summary`, and `/analyze/from-data` consume the enriched dataset directly, so the LLM always sees experience-level signals instead of just static demographic fields.
+
 ---
 
 ## Installation
@@ -218,6 +239,12 @@ npm run dev
 | **API Docs** | http://localhost:8000/docs | Interactive Swagger documentation |
 | **Health Check** | http://localhost:8000/health | Backend status endpoint |
 
+After the backend boots the default synthetic data is loaded automatically. If you want to swap in your own CSVs:
+
+1. Call `POST /upload` with `customers`, `events`, and optional `metrics` files.
+2. Visit `GET /data/summary` or `GET /context` to verify the new feature columns and row counts.
+3. Run `POST /analyze/from-data` (or use the frontend “Analyze current data” flow) to execute the full reasoning loop on the enriched dataset.
+
 ---
 
 ## API Reference
@@ -282,6 +309,21 @@ Run counterfactual simulations for a proposed intervention using the uploaded da
 
 #### POST `/uncertainty`
 Quantify hypothesis uncertainty and recommend next data collection steps.
+
+#### POST `/upload`
+Upload `customers`, `events`, and optional `metrics_daily` CSV/Excel files. Populates the in-memory cache used by `/context` and `/analyze/from-data`.
+
+#### GET `/data/summary`
+Returns schema, row counts, and sample records for each loaded table plus derived feature lists.
+
+#### GET `/context`
+Returns aggregate metrics, trends, insights, and available features for the current data cache (used by the frontend to prime prompts).
+
+#### POST `/chat/context`
+Lightweight variant that returns just-enough context (metrics, insights, feature names) for a single chat thread.
+
+#### POST `/analyze/from-data`
+Runs the full reasoning pipeline directly on the cached/enriched dataset (no JSON payload required). Accepts optional `brand_id`, `metric_name`, and free-form `business_context`.
 
 ---
 
