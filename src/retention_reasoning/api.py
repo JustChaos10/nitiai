@@ -678,7 +678,7 @@ When answering questions:
     @app.post("/analyze/from-data")
     async def analyze_from_loaded_data(
         brand_id: str | None = None,
-        metric_name: str = "churn_rate_30d",
+        metric_name: str = "churn_flag",
         business_context: str | None = None,
     ):
         """Run full analysis using currently loaded data.

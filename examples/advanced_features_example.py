@@ -73,7 +73,7 @@ def main():
         title="High churn in recent cohort",
         description="Recent customers show elevated churn rates",
         affected_cohort={"acquisition_date": "2025-01 to 2025-03"},
-        metric_name="churn_rate_30d",
+        metric_name="churn_30d",
         baseline_value=0.15,
         current_value=0.32,
         sample_size=1000,

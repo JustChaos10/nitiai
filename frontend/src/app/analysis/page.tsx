@@ -65,7 +65,7 @@ export default function AnalysisPage() {
     type: "churn_spike",
     title: "",
     description: "",
-    metric_name: "churn_rate_30d",
+    metric_name: "churn_flag",
     baseline_value: 0.1,
     current_value: 0.15,
     sample_size: 1000,
