@@ -280,6 +280,14 @@ def create_app(agent: RetentionReasoningAgent | None = None):
             data_source = payload.data or payload.data_preview
             df = pd.DataFrame(data_source) if data_source else pd.DataFrame()
             
+            # Enrich with events from cache if available
+            if not df.empty and "data" in _data_cache:
+                events = _data_cache["data"].get("events", pd.DataFrame())
+                if not events.empty and "customer_id" in df.columns:
+                    df = data_ingestion.merge_customer_events(df, events)
+                    df = data_ingestion.strengthen_causal_signals(df)
+                    logger.info(f"Enriched payload data with {len(events)} cached events")
+            
             # Extract available features from the actual data columns
             if not df.empty:
                 available_features = df.columns.tolist()
@@ -336,6 +344,14 @@ def create_app(agent: RetentionReasoningAgent | None = None):
                 # Accept both 'data' and 'data_preview' for backwards compatibility
                 data_source = payload.data or payload.data_preview
                 df = pd.DataFrame(data_source) if data_source else pd.DataFrame()
+                
+                # Enrich with events from cache if available
+                if not df.empty and "data" in _data_cache:
+                    events = _data_cache["data"].get("events", pd.DataFrame())
+                    if not events.empty and "customer_id" in df.columns:
+                        df = data_ingestion.merge_customer_events(df, events)
+                        df = data_ingestion.strengthen_causal_signals(df)
+                        logger.info(f"Stream: Enriched data with {len(events)} cached events")
                 
                 # Extract available features from the actual data columns
                 if not df.empty:
@@ -685,6 +701,9 @@ When answering questions:
         
         This endpoint creates an opportunity from the loaded data
         and runs the full hypothesis generation and testing pipeline.
+        
+        Now enriches customer data with event-level causal signals
+        (delivery delays, onboarding completion, support tickets).
         """
         try:
             # Ensure data is loaded
@@ -693,11 +712,22 @@ When answering questions:
             
             data = _data_cache["data"]
             customers = data.get("customers", pd.DataFrame())
+            events = data.get("events", pd.DataFrame())
             
             if customers.empty:
                 raise HTTPException(
                     status_code=400,
                     detail="No customer data loaded. Upload data first.",
+                )
+            
+            # CRITICAL: Enrich customers with event-level causal signals
+            if not events.empty:
+                customers = data_ingestion.merge_customer_events(customers, events)
+                # Add explicit causal bins for better statistical detection
+                customers = data_ingestion.strengthen_causal_signals(customers)
+                logger.info(
+                    f"Enriched customers with event data: "
+                    f"{len(customers)} customers, {len(events)} events"
                 )
             
             # Filter by brand

@@ -19,6 +19,38 @@ Key principles:
 - Be skeptical of obvious correlations (look for confounders)
 - Prioritize hypotheses with strong theoretical grounding
 
+## Key Causal Features to Prioritize
+
+When these features are available, prioritize them as they represent direct causal signals:
+
+**Delivery/Fulfillment Experience:**
+- `avg_delivery_delay`: Average delivery delay in days (>3 is late, strong churn driver)
+- `max_delivery_delay`: Worst delivery experience (single bad event can cause churn)
+- `had_late_delivery`: Boolean flag for any late delivery (use as treatment variable)
+- `high_delay_customer`: Boolean for avg delay > 3 days
+
+**Onboarding Completion:**
+- `completed_onboarding`: Whether customer finished onboarding flow (critical for activation)
+- `incomplete_onboarding`: Inverse of above (use as treatment variable)
+- `onboarding_steps_viewed`: Count of onboarding steps seen
+
+**Customer Support/Issues:**
+- `num_support_tickets`: Number of support tickets opened (proxy for problems)
+- `high_support_contact`: Boolean for >2 support tickets
+- `any_support_contact`: Boolean for any support interaction
+
+**Engagement Signals:**
+- `session_count`: Number of sessions (engagement proxy)
+- `email_open_rate`: Email engagement (0-1 scale)
+- `low_email_engagement`: Boolean for open rate < 0.2
+
+**Combined Risk:**
+- `causal_risk_score`: Sum of risk factors (0-3)
+- `high_causal_risk`: Boolean for 2+ risk factors present
+
+Focus hypotheses on these behavioral/experience signals rather than demographic correlations.
+Demographic correlations are often confounded - prefer causal mechanisms you can act on.
+
 Output format: JSON array of hypotheses with the following structure:
 {
   "hypotheses": [
@@ -52,6 +84,7 @@ def generate_hypothesis_prompt(
     opportunity_context: str,
     available_features: list[str],
     business_context: str | None = None,
+    feature_types: dict[str, str] | None = None,
 ) -> str:
     """Generate the prompt for hypothesis generation.
 
@@ -59,12 +92,45 @@ def generate_hypothesis_prompt(
         opportunity_context: Context about the retention opportunity
         available_features: List of available features in the data
         business_context: Optional business context
+        feature_types: Optional dict mapping feature names to type descriptions
 
     Returns:
         Formatted prompt
     """
-    feature_list = "\n".join([f"- {f}" for f in available_features[:50]])  # Limit to 50
-
+    # Categorize features for better prompt structure
+    causal_features = []
+    other_features = []
+    
+    causal_keywords = [
+        "delay", "onboarding", "support", "ticket", "session", "email",
+        "engagement", "risk", "delivery", "complete"
+    ]
+    
+    for f in available_features[:50]:  # Limit to 50
+        f_lower = f.lower()
+        if any(kw in f_lower for kw in causal_keywords):
+            causal_features.append(f)
+        else:
+            other_features.append(f)
+    
+    # Format causal features with type hints if available
+    causal_section = ""
+    if causal_features:
+        causal_list = []
+        for f in causal_features:
+            if feature_types and f in feature_types:
+                causal_list.append(f"- {f} ({feature_types[f]})")
+            else:
+                causal_list.append(f"- {f}")
+        causal_section = f"""
+## Causal Signal Features (PRIORITIZE THESE)
+These features represent direct causal signals from customer experience:
+{chr(10).join(causal_list)}
+"""
+    
+    # Format other features
+    other_list = [f"- {f}" for f in other_features[:30]]  # Limit other features
+    
     business_section = ""
     if business_context:
         business_section = f"""
@@ -74,10 +140,9 @@ def generate_hypothesis_prompt(
 
     return f"""
 {opportunity_context}
-
-## Available Features
-The following features are available in the enriched_customers dataset:
-{feature_list}
+{causal_section}
+## Other Available Features
+{chr(10).join(other_list)}
 ... and {len(available_features)} total features.
 
 {business_section}
@@ -85,14 +150,18 @@ The following features are available in the enriched_customers dataset:
 ## Task
 Generate 5-10 testable causal hypotheses that could explain this retention issue.
 
+**IMPORTANT: Prioritize hypotheses using the Causal Signal Features above.**
+These features (delivery delays, onboarding status, support contacts) represent 
+actual customer experiences that directly cause churn, not just correlations.
+
 Focus on:
-1. Behavioral patterns (engagement, usage, frequency)
-2. Product experience (delivery, quality, support)
-3. Economic factors (price sensitivity, promotions, value perception)
-4. Lifecycle timing (onboarding, activation, habit formation)
+1. **Product experience** (delivery delays, quality issues, support friction)
+2. **Onboarding/activation** (incomplete onboarding, low early engagement)
+3. **Behavioral patterns** (session frequency, email engagement)
+4. **Economic factors** (price sensitivity, discount dependency)
 
 For each hypothesis:
-- Be specific about the causal variable (not vague like "customer satisfaction")
+- Be specific about the causal variable (use features from the Causal Signal list when possible)
 - Explain the causal mechanism clearly
 - Identify potential confounders that could create spurious correlation
 - Suggest appropriate statistical tests

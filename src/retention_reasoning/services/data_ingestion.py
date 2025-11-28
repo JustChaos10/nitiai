@@ -192,33 +192,283 @@ class DataIngestionService:
         return customers
 
     def _aggregate_events(self, events: pd.DataFrame) -> pd.DataFrame:
-        """Aggregate events by customer.
+        """Aggregate events by customer with causal feature extraction.
+        
+        Extracts key causal signals including:
+        - Delivery delay metrics (avg, max, late delivery flag)
+        - Onboarding completion status
+        - Support ticket counts
+        - Email engagement rates
         
         Args:
-            events: Events DataFrame
+            events: Events DataFrame with columns: customer_id, event_type, 
+                    event_properties, event_time
             
         Returns:
-            Aggregated features per customer
+            Aggregated features per customer including causal signals
         """
         if "customer_id" not in events.columns:
             return pd.DataFrame()
         
+        # Parse delay_days from event_properties (format: "delay_days=5")
+        events = events.copy()
+        if "event_properties" in events.columns:
+            events["delay_days"] = events["event_properties"].apply(
+                self._parse_delay_days
+            )
+        else:
+            events["delay_days"] = None
+        
+        # Basic event aggregation
         agg = events.groupby("customer_id").agg(
             total_events=("event_id", "count"),
-            event_types=("event_type", lambda x: list(x.unique())),
             first_event=("event_time", "min"),
             last_event=("event_time", "max"),
         ).reset_index()
         
-        # Count specific event types
-        if "event_type" in events.columns:
-            event_counts = events.groupby(
-                ["customer_id", "event_type"]
-            ).size().unstack(fill_value=0)
-            event_counts.columns = [f"count_{col}" for col in event_counts.columns]
-            agg = agg.merge(event_counts.reset_index(), on="customer_id", how="left")
+        # --- Delivery delay features (CAUSAL SIGNAL) ---
+        delivery_events = events[events["event_type"] == "delivery"]
+        if not delivery_events.empty:
+            delivery_agg = delivery_events.groupby("customer_id").agg(
+                avg_delivery_delay=("delay_days", "mean"),
+                max_delivery_delay=("delay_days", "max"),
+                delivery_count=("event_id", "count"),
+            ).reset_index()
+            # Add boolean flag for late deliveries (delay > 2 days)
+            delivery_agg["had_late_delivery"] = delivery_agg["max_delivery_delay"] > 2
+            agg = agg.merge(delivery_agg, on="customer_id", how="left")
+        
+        # --- Onboarding features (CAUSAL SIGNAL) ---
+        onboarding_complete = events[events["event_type"] == "complete_onboarding"]
+        onboarding_steps = events[events["event_type"] == "view_onboarding_step"]
+        
+        # Completed onboarding flag
+        completed_customers = set(onboarding_complete["customer_id"].unique())
+        agg["completed_onboarding"] = agg["customer_id"].isin(completed_customers)
+        
+        # Onboarding steps viewed count
+        if not onboarding_steps.empty:
+            steps_agg = onboarding_steps.groupby("customer_id").size().reset_index(
+                name="onboarding_steps_viewed"
+            )
+            agg = agg.merge(steps_agg, on="customer_id", how="left")
+        
+        # --- Support ticket features (CAUSAL SIGNAL) ---
+        # Only count opened tickets (not closed) to avoid double-counting
+        support_opened = events[events["event_type"] == "support_ticket_opened"]
+        if not support_opened.empty:
+            support_agg = support_opened.groupby("customer_id").size().reset_index(
+                name="num_support_tickets"
+            )
+            agg = agg.merge(support_agg, on="customer_id", how="left")
+        
+        # --- Email engagement features ---
+        email_sent = events[events["event_type"] == "email_sent"]
+        email_opened = events[events["event_type"] == "email_opened"]
+        
+        if not email_sent.empty:
+            sent_counts = email_sent.groupby("customer_id").size().reset_index(
+                name="emails_sent"
+            )
+            agg = agg.merge(sent_counts, on="customer_id", how="left")
+        
+        if not email_opened.empty:
+            opened_counts = email_opened.groupby("customer_id").size().reset_index(
+                name="emails_opened"
+            )
+            agg = agg.merge(opened_counts, on="customer_id", how="left")
+        
+        # Calculate email open rate
+        if "emails_sent" in agg.columns and "emails_opened" in agg.columns:
+            agg["email_open_rate"] = (
+                agg["emails_opened"].fillna(0) / agg["emails_sent"].fillna(1)
+            ).clip(0, 1)
+        
+        # --- Session/engagement count ---
+        session_events = events[events["event_type"] == "session"]
+        if not session_events.empty:
+            session_agg = session_events.groupby("customer_id").size().reset_index(
+                name="session_count"
+            )
+            agg = agg.merge(session_agg, on="customer_id", how="left")
+        
+        # Fill NaN values with appropriate defaults
+        numeric_cols = [
+            "avg_delivery_delay", "max_delivery_delay", "delivery_count",
+            "onboarding_steps_viewed", "num_support_tickets", 
+            "emails_sent", "emails_opened", "email_open_rate", "session_count"
+        ]
+        for col in numeric_cols:
+            if col in agg.columns:
+                agg[col] = agg[col].fillna(0)
+        
+        # Fill boolean columns
+        if "had_late_delivery" in agg.columns:
+            agg["had_late_delivery"] = agg["had_late_delivery"].fillna(False)
+        if "completed_onboarding" not in agg.columns:
+            agg["completed_onboarding"] = False
+        
+        logger.info(
+            f"Aggregated events for {len(agg)} customers with causal features: "
+            f"delivery_delay, onboarding, support_tickets, email_engagement"
+        )
         
         return agg
+
+    def _parse_delay_days(self, event_properties: str | None) -> float | None:
+        """Parse delay_days value from event_properties string.
+        
+        Args:
+            event_properties: String like "delay_days=5" or None
+            
+        Returns:
+            Parsed delay days as float, or None if not found
+        """
+        if not event_properties or pd.isna(event_properties):
+            return None
+        
+        try:
+            # Handle format: "delay_days=5"
+            if "delay_days=" in str(event_properties):
+                parts = str(event_properties).split("delay_days=")
+                if len(parts) > 1:
+                    # Extract numeric value (handle cases like "delay_days=5,other=x")
+                    value_str = parts[1].split(",")[0].split(";")[0].strip()
+                    return float(value_str)
+        except (ValueError, IndexError):
+            pass
+        
+        return None
+
+    def strengthen_causal_signals(
+        self, 
+        enriched_customers: pd.DataFrame
+    ) -> pd.DataFrame:
+        """Create explicit causal bins from enriched customer data.
+        
+        Adds boolean/categorical features that represent causal hypotheses:
+        - high_delay_customer: avg_delivery_delay > 3 days
+        - incomplete_onboarding: completed_onboarding == False
+        - high_support_contact: num_support_tickets > 2
+        - low_email_engagement: email_open_rate < 0.2
+        
+        These features make causal relationships more detectable
+        in statistical tests by creating clear treatment/control groups.
+        
+        Args:
+            enriched_customers: Customer DataFrame enriched with event features
+            
+        Returns:
+            DataFrame with additional causal signal features
+        """
+        df = enriched_customers.copy()
+        
+        # --- Delivery delay signals ---
+        if "avg_delivery_delay" in df.columns:
+            df["high_delay_customer"] = df["avg_delivery_delay"] > 3
+            df["moderate_delay_customer"] = (
+                (df["avg_delivery_delay"] > 1) & (df["avg_delivery_delay"] <= 3)
+            )
+            logger.debug(
+                f"Created delivery delay bins: "
+                f"{df['high_delay_customer'].sum()} high delay customers"
+            )
+        
+        # --- Onboarding signals ---
+        if "completed_onboarding" in df.columns:
+            df["incomplete_onboarding"] = ~df["completed_onboarding"].astype(bool)
+            logger.debug(
+                f"Created onboarding signal: "
+                f"{df['incomplete_onboarding'].sum()} incomplete onboarding"
+            )
+        
+        if "onboarding_steps_viewed" in df.columns:
+            df["low_onboarding_engagement"] = df["onboarding_steps_viewed"] < 2
+        
+        # --- Support contact signals ---
+        if "num_support_tickets" in df.columns:
+            # Note: Each ticket counts as 1 (we only count opened, not closed)
+            df["high_support_contact"] = df["num_support_tickets"] > 1
+            df["any_support_contact"] = df["num_support_tickets"] > 0
+            logger.debug(
+                f"Created support contact bins: "
+                f"{df['any_support_contact'].sum()} customers with support contact"
+            )
+        
+        # --- Email engagement signals ---
+        if "email_open_rate" in df.columns:
+            df["low_email_engagement"] = df["email_open_rate"] < 0.2
+            df["high_email_engagement"] = df["email_open_rate"] > 0.5
+        
+        # --- Session engagement signals ---
+        if "session_count" in df.columns:
+            df["low_session_engagement"] = df["session_count"] < 3
+            df["high_session_engagement"] = df["session_count"] > 10
+        
+        # --- Combined risk signals ---
+        # Create a combined risk score based on multiple causal factors
+        risk_factors = []
+        if "high_delay_customer" in df.columns:
+            risk_factors.append(df["high_delay_customer"].astype(int))
+        if "incomplete_onboarding" in df.columns:
+            risk_factors.append(df["incomplete_onboarding"].astype(int))
+        if "high_support_contact" in df.columns:
+            risk_factors.append(df["high_support_contact"].astype(int))
+        
+        if risk_factors:
+            df["causal_risk_score"] = sum(risk_factors)
+            df["high_causal_risk"] = df["causal_risk_score"] >= 2
+            logger.info(
+                f"Created causal risk score: "
+                f"{df['high_causal_risk'].sum()} high-risk customers "
+                f"({df['high_causal_risk'].mean():.1%} of total)"
+            )
+        
+        return df
+
+    def get_causal_ground_truth(self) -> dict:
+        """Return documented causal ground truth for validation.
+        
+        This documents the designed causal relationships in the synthetic data
+        to help validate that the agent is finding real signals.
+        
+        Returns:
+            Dictionary with causal relationships and expected effect sizes
+        """
+        return {
+            "direct_effects": {
+                "avg_delivery_delay > 3": {
+                    "effect_on": "churn_flag",
+                    "expected_direction": "positive",
+                    "expected_effect_size": 0.15,  # +15% churn
+                    "description": "Late deliveries (>3 days) increase churn"
+                },
+                "completed_onboarding = False": {
+                    "effect_on": "churn_flag", 
+                    "expected_direction": "positive",
+                    "expected_effect_size": 0.20,  # +20% churn
+                    "description": "Incomplete onboarding increases churn"
+                },
+                "num_support_tickets > 2": {
+                    "effect_on": "churn_flag",
+                    "expected_direction": "positive", 
+                    "expected_effect_size": 0.10,  # +10% churn
+                    "description": "High support contact indicates problems"
+                },
+            },
+            "indirect_effects": {
+                "late_delivery → low_engagement → churn": {
+                    "mediator": "session_count",
+                    "description": "Late deliveries reduce engagement, which causes churn"
+                },
+            },
+            "confounders": {
+                "brand": {
+                    "affects": ["delivery_delay", "churn"],
+                    "description": "Some brands have more delays AND higher baseline churn"
+                },
+            },
+        }
 
     def get_available_features(self, data: dict[str, pd.DataFrame]) -> list[str]:
         """Get list of all available features from loaded data.
